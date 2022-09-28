@@ -9,11 +9,11 @@
 //!
 //! [here]: https://medium.com/@VitalikButerin/quadratic-arithmetic-programs-from-zero-to-hero-f6d558cea649
 #![allow(clippy::assertions_on_result_states)]
-use libspartan::{InputsAssignment, Instance, SNARKGens, VarsAssignment, SNARK, Scalar};
-use merlin::Transcript;
-use ark_std::UniformRand;
-use ark_std::{Zero, One};
 use ark_std::test_rng;
+use ark_std::UniformRand;
+use ark_std::{One, Zero};
+use libspartan::{InputsAssignment, Instance, SNARKGens, Scalar, VarsAssignment, SNARK};
+use merlin::Transcript;
 
 #[allow(non_snake_case)]
 fn produce_r1cs() -> (

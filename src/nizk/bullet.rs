@@ -182,11 +182,13 @@ impl BulletReductionProof {
     }
 
     // 2. Compute 1/(u_k...u_1) and 1/u_k, ..., 1/u_1
-    let mut challenges_inv = challenges.clone();
-    let allinv = challenges_inv
+    // let mut challenges_inv = challenges.clone();
+    let mut challenges_inv = challenges
       .iter()
       .map(|x| x.inverse().unwrap())
       .collect::<Vec<_>>();
+    let mut all_inv = Scalar::one();
+    challenges_inv.iter().for_each(|c| all_inv *= *c);
 
     // 3. Compute u_i^2 and (1/u_i)^2
     for i in 0..lg_n {
@@ -197,7 +199,7 @@ impl BulletReductionProof {
     let challenges_inv_sq = challenges_inv;
 
     // 4. Compute s values inductively.
-    let mut s = allinv;
+    let mut s = vec![all_inv];
     for i in 1..n {
       let lg_i = (32 - 1 - (i as u32).leading_zeros()) as usize;
       let k = 1 << lg_i;
@@ -228,6 +230,7 @@ impl BulletReductionProof {
     let scalars = s.iter().map(|x| x.into_repr()).collect::<Vec<_>>();
 
     let G_hat = VariableBaseMSM::multi_scalar_mul(G.as_ref(), scalars.as_ref());
+    println!("a {} s {}", a.len(), s.len());
     let a_hat = inner_product(a, &s);
 
     let bases = GroupElement::batch_normalization_into_affine(

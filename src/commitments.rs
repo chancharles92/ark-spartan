@@ -74,10 +74,8 @@ pub trait Commitments {
 impl Commitments for Scalar {
   fn commit(&self, blind: &Scalar, gens_n: &MultiCommitGens) -> GroupElement {
     assert_eq!(gens_n.n, 1);
-    let base = vec![gens_n.G[0].into_affine(), gens_n.h.into_affine()];
-    let scalars = vec![self.into_repr(), blind.into_repr()];
 
-    VariableBaseMSM::multi_scalar_mul(base.as_ref(), scalars.as_ref())
+    gens_n.G[0].mul(self.into_repr()) + gens_n.h.mul(blind.into_repr())
   }
 }
 
@@ -85,12 +83,12 @@ impl Commitments for Vec<Scalar> {
   fn commit(&self, blind: &Scalar, gens_n: &MultiCommitGens) -> GroupElement {
     assert_eq!(gens_n.n, self.len());
 
-    let mut base = ProjectiveCurve::batch_normalization_into_affine(gens_n.G.as_ref());
+    let mut bases = ProjectiveCurve::batch_normalization_into_affine(gens_n.G.as_ref());
     let mut scalars = self.iter().map(|x| x.into_repr()).collect::<Vec<_>>();
-    base.push(gens_n.h.into_affine());
+    bases.push(gens_n.h.into_affine());
     scalars.push(blind.into_repr());
 
-    VariableBaseMSM::multi_scalar_mul(base.as_ref(), scalars.as_ref())
+    VariableBaseMSM::multi_scalar_mul(bases.as_ref(), scalars.as_ref())
   }
 }
 
@@ -98,11 +96,11 @@ impl Commitments for [Scalar] {
   fn commit(&self, blind: &Scalar, gens_n: &MultiCommitGens) -> GroupElement {
     assert_eq!(gens_n.n, self.len());
 
-    let mut base = ProjectiveCurve::batch_normalization_into_affine(gens_n.G.as_ref());
+    let mut bases = ProjectiveCurve::batch_normalization_into_affine(gens_n.G.as_ref());
     let mut scalars = self.iter().map(|x| x.into_repr()).collect::<Vec<_>>();
-    base.push(gens_n.h.into_affine());
+    bases.push(gens_n.h.into_affine());
     scalars.push(blind.into_repr());
 
-    VariableBaseMSM::multi_scalar_mul(base.as_ref(), scalars.as_ref())
+    VariableBaseMSM::multi_scalar_mul(bases.as_ref(), scalars.as_ref())
   }
 }

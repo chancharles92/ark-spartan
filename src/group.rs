@@ -10,7 +10,9 @@ pub struct CompressedGroup([u8; 48]);
 // GROUP_BASEPOINT_COMPRESSED
 pub(crate) fn group_basepoint_compressed() -> Vec<u8> {
   let mut buf = vec![];
-  GroupElement::prime_subgroup_generator().serialize(&mut buf).unwrap();
+  GroupElement::prime_subgroup_generator()
+    .serialize(&mut buf)
+    .unwrap();
   buf
 }
 
