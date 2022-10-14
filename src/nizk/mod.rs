@@ -399,7 +399,7 @@ impl<G: ProjectiveCurve> DotProductProof<G> {
 
     <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"a", &a_vec);
 
-    let delta = Commitments::batch_commit(&d_vec, blind_x, gens_n);
+    let delta = Commitments::batch_commit(&d_vec, &r_delta, gens_n);
     <Transcript as ProofTranscript<G>>::append_point(transcript, b"delta", &delta);
 
     let dotproduct_a_d = DotProductProof::<G>::compute_dotproduct(a_vec, &d_vec);
