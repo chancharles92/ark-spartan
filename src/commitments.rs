@@ -1,6 +1,3 @@
-use super::group::GroupElement;
-use super::scalar::Scalar;
-use crate::group::group_basepoint_compressed;
 use ark_ec::msm::VariableBaseMSM;
 use ark_ec::ProjectiveCurve;
 use ark_ff::PrimeField;
@@ -12,26 +9,26 @@ use sha3::Shake256;
 use std::io::Read;
 
 #[derive(Debug)]
-pub struct MultiCommitGens {
+pub struct MultiCommitGens<G> {
   pub n: usize,
-  pub G: Vec<GroupElement>,
-  pub h: GroupElement,
+  pub G: Vec<G>,
+  pub h: G,
 }
 
-impl MultiCommitGens {
+impl<G: ProjectiveCurve> MultiCommitGens<G> {
   pub fn new(n: usize, label: &[u8]) -> Self {
     let mut shake = Shake256::default();
     shake.input(label);
-    shake.input(group_basepoint_compressed().as_slice());
+    shake.input(G::prime_subgroup_generator());
 
     let mut reader = shake.xof_result();
     let mut seed = [0u8; 32];
     reader.read_exact(&mut seed).unwrap();
     let mut rng = ChaCha20Rng::from_seed(seed);
 
-    let mut gens: Vec<GroupElement> = Vec::new();
+    let mut gens: Vec<G> = Vec::new();
     for _ in 0..n + 1 {
-      gens.push(GroupElement::rand(&mut rng));
+      gens.push(G::rand(&mut rng));
     }
 
     MultiCommitGens {
@@ -41,7 +38,7 @@ impl MultiCommitGens {
     }
   }
 
-  pub fn clone(&self) -> MultiCommitGens {
+  pub fn clone(&self) -> Self {
     MultiCommitGens {
       n: self.n,
       h: self.h,
@@ -49,7 +46,7 @@ impl MultiCommitGens {
     }
   }
 
-  pub fn split_at(&self, mid: usize) -> (MultiCommitGens, MultiCommitGens) {
+  pub fn split_at(&self, mid: usize) -> (Self, Self) {
     let (G1, G2) = self.G.split_at(mid);
 
     (
@@ -67,20 +64,20 @@ impl MultiCommitGens {
   }
 }
 
-pub trait Commitments {
-  fn commit(&self, blind: &Scalar, gens_n: &MultiCommitGens) -> GroupElement;
+pub trait Commitments<F, G> {
+  fn commit(&self, blind: &F, gens_n: &MultiCommitGens<G>) -> G;
 }
 
-impl Commitments for Scalar {
-  fn commit(&self, blind: &Scalar, gens_n: &MultiCommitGens) -> GroupElement {
+impl<F, G> Commitments<F, G> for F {
+  fn commit(&self, blind: &F, gens_n: &MultiCommitGens<G>) -> G {
     assert_eq!(gens_n.n, 1);
 
     gens_n.G[0].mul(self.into_repr()) + gens_n.h.mul(blind.into_repr())
   }
 }
 
-impl Commitments for Vec<Scalar> {
-  fn commit(&self, blind: &Scalar, gens_n: &MultiCommitGens) -> GroupElement {
+impl<F, G> Commitments<F, G> for Vec<F> {
+  fn commit(&self, blind: &F, gens_n: &MultiCommitGens<G>) -> G {
     assert_eq!(gens_n.n, self.len());
 
     let mut bases = ProjectiveCurve::batch_normalization_into_affine(gens_n.G.as_ref());
@@ -92,8 +89,8 @@ impl Commitments for Vec<Scalar> {
   }
 }
 
-impl Commitments for [Scalar] {
-  fn commit(&self, blind: &Scalar, gens_n: &MultiCommitGens) -> GroupElement {
+impl<F, G> Commitments<F, G> for [F] {
+  fn commit(&self, blind: &F, gens_n: &MultiCommitGens<G>) -> G {
     assert_eq!(gens_n.n, self.len());
 
     let mut bases = ProjectiveCurve::batch_normalization_into_affine(gens_n.G.as_ref());

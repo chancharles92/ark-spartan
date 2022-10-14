@@ -105,7 +105,7 @@ Finally, we provide an example that specifies a custom R1CS instance instead of 
 #![allow(non_snake_case)]
 # extern crate libspartan;
 # extern crate merlin;
-# use libspartan::{InputsAssignment, Instance, SNARKGens, VarsAssignment, SNARK, Scalar};
+# use libspartan::{InputsAssignment, Instance, SNARKGens, VarsAssignment, SNARK, F};
 # use merlin::Transcript;
 # use ark_std::test_rng;
 # use ark_std::{One, Zero};
@@ -172,16 +172,16 @@ Finally, we provide an example that specifies a custom R1CS instance instead of 
 
   // We will encode the above constraints into three matrices, where
   // the coefficients in the matrix are in the little-endian byte order
-  let mut A: Vec<(usize, usize, Scalar)> = Vec::new();
-  let mut B: Vec<(usize, usize, Scalar)> = Vec::new();
-  let mut C: Vec<(usize, usize, Scalar)> = Vec::new();
+  let mut A: Vec<(usize, usize, F)> = Vec::new();
+  let mut B: Vec<(usize, usize, F)> = Vec::new();
+  let mut C: Vec<(usize, usize, F)> = Vec::new();
 
   // The constraint system is defined over a finite field, which in our case is
   // the scalar field of ristreeto255/curve25519 i.e., p =  2^{252}+27742317777372353535851937790883648493
   // To construct these matrices, we will use `curve25519-dalek` but one can use any other method.
 
   // a variable that holds a byte representation of 1
-  let one = Scalar::one();
+  let one = F::one();
 
   // R1CS is a set of three sparse matrices A B C, where is a row for every 
   // constraint and a column for every entry in z = (vars, 1, inputs)
@@ -212,16 +212,16 @@ Finally, we provide an example that specifies a custom R1CS instance instead of 
 
   // compute a satisfying assignment
   let mut prng = test_rng();
-  let i0 = Scalar::rand(&mut prng);
-  let i1 = Scalar::rand(&mut prng);
-  let z0 = Scalar::rand(&mut prng);
-  let z1 = Scalar::rand(&mut prng);
+  let i0 = F::rand(&mut prng);
+  let i1 = F::rand(&mut prng);
+  let z0 = F::rand(&mut prng);
+  let z1 = F::rand(&mut prng);
   let z2 = (z0 + z1) * i0; // constraint 0
   let z3 = (z0 + i1) * z2; // constraint 1
-  let z4 = Scalar::zero(); //constraint 2
+  let z4 = F::zero(); //constraint 2
 
   // create a VarsAssignment
-  let mut vars = vec![Scalar::zero(); num_vars];
+  let mut vars = vec![F::zero(); num_vars];
   vars[0] = z0;
   vars[1] = z1;
   vars[2] = z2;
@@ -230,7 +230,7 @@ Finally, we provide an example that specifies a custom R1CS instance instead of 
   let assignment_vars = VarsAssignment::new(&vars).unwrap();
 
   // create an InputsAssignment
-  let mut inputs = vec![Scalar::zero(); num_inputs];
+  let mut inputs = vec![F::zero(); num_inputs];
   inputs[0] = i0;
   inputs[1] = i1;
   let assignment_inputs = InputsAssignment::new(&inputs).unwrap();

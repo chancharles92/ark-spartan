@@ -3,38 +3,35 @@ use super::commitments::{Commitments, MultiCommitGens};
 use super::errors::ProofVerifyError;
 use super::math::Math;
 use super::random::RandomTape;
-use super::scalar::Scalar;
 use super::transcript::{AppendToTranscript, ProofTranscript};
-use crate::group::GroupElement;
-use ark_ec::group::Group;
+use ark_ec::ProjectiveCurve;
 use ark_serialize::*;
-use ark_std::Zero;
 use bullet::BulletReductionProof;
 use merlin::Transcript;
 mod bullet;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
-pub struct KnowledgeProof {
-  alpha: GroupElement,
-  z1: Scalar,
-  z2: Scalar,
+pub struct KnowledgeProof<G: ProjectiveCurve> {
+  alpha: G,
+  z1: G::ScalarField,
+  z2: G::ScalarField,
 }
 
-impl KnowledgeProof {
+impl<G: ProjectiveCurve> KnowledgeProof<G> {
   fn protocol_name() -> &'static [u8] {
     b"knowledge proof"
   }
 
   pub fn prove(
-    gens_n: &MultiCommitGens,
+    gens_n: &MultiCommitGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape,
-    x: &Scalar,
-    r: &Scalar,
-  ) -> (KnowledgeProof, GroupElement) {
+    random_tape: &mut RandomTape<G>,
+    x: &G::ScalarField,
+    r: &G::ScalarField,
+  ) -> (KnowledgeProof<G>, G) {
     transcript.append_protocol_name(KnowledgeProof::protocol_name());
 
-    // produce two random Scalars
+    // produce two random Fs
     let t1 = random_tape.random_scalar(b"t1");
     let t2 = random_tape.random_scalar(b"t2");
 
@@ -54,9 +51,9 @@ impl KnowledgeProof {
 
   pub fn verify(
     &self,
-    gens_n: &MultiCommitGens,
+    gens_n: &MultiCommitGens<G>,
     transcript: &mut Transcript,
-    C: &GroupElement,
+    C: &G,
   ) -> Result<(), ProofVerifyError> {
     transcript.append_protocol_name(KnowledgeProof::protocol_name());
     C.append_to_transcript(b"C", transcript);
@@ -76,28 +73,28 @@ impl KnowledgeProof {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
-pub struct EqualityProof {
-  alpha: GroupElement,
-  z: Scalar,
+pub struct EqualityProof<G: ProjectiveCurve> {
+  alpha: G,
+  z: G::ScalarField,
 }
 
-impl EqualityProof {
+impl<G: ProjectiveCurve> EqualityProof<G> {
   fn protocol_name() -> &'static [u8] {
     b"equality proof"
   }
 
   pub fn prove(
-    gens_n: &MultiCommitGens,
+    gens_n: &MultiCommitGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape,
-    v1: &Scalar,
-    s1: &Scalar,
-    v2: &Scalar,
-    s2: &Scalar,
-  ) -> (EqualityProof, GroupElement, GroupElement) {
+    random_tape: &mut RandomTape<G::ScalarField>,
+    v1: &G::ScalarField,
+    s1: &G::ScalarField,
+    v2: &G::ScalarField,
+    s2: &G::ScalarField,
+  ) -> (Self, G, G) {
     transcript.append_protocol_name(EqualityProof::protocol_name());
 
-    // produce a random Scalar
+    // produce a random F
     let r = random_tape.random_scalar(b"r");
 
     let C1 = v1.commit(s1, gens_n);
@@ -118,10 +115,10 @@ impl EqualityProof {
 
   pub fn verify(
     &self,
-    gens_n: &MultiCommitGens,
+    gens_n: &MultiCommitGens<G>,
     transcript: &mut Transcript,
-    C1: &GroupElement,
-    C2: &GroupElement,
+    C1: &G,
+    C2: &G,
   ) -> Result<(), ProofVerifyError> {
     transcript.append_protocol_name(EqualityProof::protocol_name());
     C1.append_to_transcript(b"C1", transcript);
@@ -144,68 +141,33 @@ impl EqualityProof {
   }
 }
 
-#[derive(Debug)]
-pub struct ProductProof {
-  alpha: GroupElement,
-  beta: GroupElement,
-  delta: GroupElement,
-  z: [Scalar; 5],
+#[derive(Debug, CanonicalDeserialize, CanonicalSerialize)]
+pub struct ProductProof<G: ProjectiveCurve> {
+  alpha: G,
+  beta: G,
+  delta: G,
+  z: [G::ScalarField; 5],
 }
 
-impl CanonicalSerialize for ProductProof {
-  fn serialize<W: Write>(&self, mut writer: W) -> Result<(), SerializationError> {
-    self.alpha.serialize(&mut writer)?;
-    self.beta.serialize(&mut writer)?;
-    self.delta.serialize(&mut writer)?;
-    for s in self.z.iter() {
-      s.serialize(&mut writer)?;
-    }
-    Ok(())
-  }
-
-  fn serialized_size(&self) -> usize {
-    self.alpha.serialized_size() * 3 + self.z[0].serialized_size() * 5
-  }
-}
-
-impl CanonicalDeserialize for ProductProof {
-  /// Reads `Self` from `reader`.
-  fn deserialize<R: Read>(mut reader: R) -> Result<Self, SerializationError> {
-    let alpha = GroupElement::deserialize(&mut reader)?;
-    let beta = GroupElement::deserialize(&mut reader)?;
-    let delta = GroupElement::deserialize(&mut reader)?;
-    let mut z = [Scalar::zero(); 5];
-    for zi in z.iter_mut() {
-      *zi = Scalar::deserialize(&mut reader)?;
-    }
-    Ok(Self {
-      alpha,
-      beta,
-      delta,
-      z,
-    })
-  }
-}
-
-impl ProductProof {
+impl<G: ProjectiveCurve> ProductProof<G> {
   fn protocol_name() -> &'static [u8] {
     b"product proof"
   }
 
   pub fn prove(
-    gens_n: &MultiCommitGens,
+    gens_n: &MultiCommitGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape,
-    x: &Scalar,
-    rX: &Scalar,
-    y: &Scalar,
-    rY: &Scalar,
-    z: &Scalar,
-    rZ: &Scalar,
-  ) -> (ProductProof, GroupElement, GroupElement, GroupElement) {
+    random_tape: &mut RandomTape<G::ScalarField>,
+    x: &G::ScalarField,
+    rX: &G::ScalarField,
+    y: &G::ScalarField,
+    rY: &G::ScalarField,
+    z: &G::ScalarField,
+    rZ: &G::ScalarField,
+  ) -> (Self, G, G, G) {
     transcript.append_protocol_name(ProductProof::protocol_name());
 
-    // produce five random Scalar
+    // produce five random F
     let b1 = random_tape.random_scalar(b"b1");
     let b2 = random_tape.random_scalar(b"b2");
     let b3 = random_tape.random_scalar(b"b3");
@@ -260,12 +222,12 @@ impl ProductProof {
   }
 
   fn check_equality(
-    P: &GroupElement,
-    X: &GroupElement,
-    c: &Scalar,
-    gens_n: &MultiCommitGens,
-    z1: &Scalar,
-    z2: &Scalar,
+    P: &G,
+    X: &G,
+    c: &G::ScalarField,
+    gens_n: &MultiCommitGens<G>,
+    z1: &G::ScalarField,
+    z2: &G::ScalarField,
   ) -> bool {
     let lhs = *P + X.mul(c);
     let rhs = z1.commit(z2, gens_n);
@@ -275,11 +237,11 @@ impl ProductProof {
 
   pub fn verify(
     &self,
-    gens_n: &MultiCommitGens,
+    gens_n: &MultiCommitGens<G>,
     transcript: &mut Transcript,
-    X: &GroupElement,
-    Y: &GroupElement,
-    Z: &GroupElement,
+    X: &G,
+    Y: &G,
+    Z: &G,
   ) -> Result<(), ProofVerifyError> {
     transcript.append_protocol_name(ProductProof::protocol_name());
 
@@ -321,35 +283,35 @@ impl ProductProof {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct DotProductProof {
-  delta: GroupElement,
-  beta: GroupElement,
-  z: Vec<Scalar>,
-  z_delta: Scalar,
-  z_beta: Scalar,
+pub struct DotProductProof<G: ProjectiveCurve> {
+  delta: G,
+  beta: G,
+  z: Vec<G::ScalarField>,
+  z_delta: G::ScalarField,
+  z_beta: G::ScalarField,
 }
 
-impl DotProductProof {
+impl<G: ProjectiveCurve> DotProductProof<G> {
   fn protocol_name() -> &'static [u8] {
     b"dot product proof"
   }
 
-  pub fn compute_dotproduct(a: &[Scalar], b: &[Scalar]) -> Scalar {
+  pub fn compute_dotproduct(a: &[G::ScalarField], b: &[G::ScalarField]) -> G::ScalarField {
     assert_eq!(a.len(), b.len());
     (0..a.len()).map(|i| a[i] * b[i]).sum()
   }
 
   pub fn prove(
-    gens_1: &MultiCommitGens,
-    gens_n: &MultiCommitGens,
+    gens_1: &MultiCommitGens<G>,
+    gens_n: &MultiCommitGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape,
-    x_vec: &[Scalar],
-    blind_x: &Scalar,
-    a_vec: &[Scalar],
-    y: &Scalar,
-    blind_y: &Scalar,
-  ) -> (DotProductProof, GroupElement, GroupElement) {
+    random_tape: &mut RandomTape<G::ScalarField>,
+    x_vec: &[G::ScalarField],
+    blind_x: &G::ScalarField,
+    a_vec: &[G::ScalarField],
+    y: &G::ScalarField,
+    blind_y: &G::ScalarField,
+  ) -> (Self, G, G) {
     transcript.append_protocol_name(DotProductProof::protocol_name());
 
     let n = x_vec.len();
@@ -382,7 +344,7 @@ impl DotProductProof {
 
     let z = (0..d_vec.len())
       .map(|i| c * x_vec[i] + d_vec[i])
-      .collect::<Vec<Scalar>>();
+      .collect::<Vec<G::ScalarField>>();
 
     let z_delta = c * blind_x + r_delta;
     let z_beta = c * blind_y + r_beta;
@@ -402,12 +364,12 @@ impl DotProductProof {
 
   pub fn verify(
     &self,
-    gens_1: &MultiCommitGens,
-    gens_n: &MultiCommitGens,
+    gens_1: &MultiCommitGens<G>,
+    gens_n: &MultiCommitGens<G>,
     transcript: &mut Transcript,
-    a: &[Scalar],
-    Cx: &GroupElement,
-    Cy: &GroupElement,
+    a: &[G::ScalarField],
+    Cx: &G,
+    Cy: &G,
   ) -> Result<(), ProofVerifyError> {
     assert_eq!(gens_n.n, a.len());
     assert_eq!(gens_1.n, 1);
@@ -434,13 +396,13 @@ impl DotProductProof {
   }
 }
 
-pub struct DotProductProofGens {
+pub struct DotProductProofGens<G> {
   n: usize,
-  pub gens_n: MultiCommitGens,
-  pub gens_1: MultiCommitGens,
+  pub gens_n: MultiCommitGens<G>,
+  pub gens_1: MultiCommitGens<G>,
 }
 
-impl DotProductProofGens {
+impl<G> DotProductProofGens<G> {
   pub fn new(n: usize, label: &[u8]) -> Self {
     let (gens_n, gens_1) = MultiCommitGens::new(n + 1, label).split_at(n);
     DotProductProofGens { n, gens_n, gens_1 }
@@ -448,34 +410,34 @@ impl DotProductProofGens {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct DotProductProofLog {
-  bullet_reduction_proof: BulletReductionProof,
-  delta: GroupElement,
-  beta: GroupElement,
-  z1: Scalar,
-  z2: Scalar,
+pub struct DotProductProofLog<G: ProjectiveCurve> {
+  bullet_reduction_proof: BulletReductionProof<G>,
+  delta: G,
+  beta: G,
+  z1: G::ScalarField,
+  z2: G::ScalarField,
 }
 
-impl DotProductProofLog {
+impl<G: ProjectiveCurve> DotProductProofLog<G> {
   fn protocol_name() -> &'static [u8] {
     b"dot product proof (log)"
   }
 
-  pub fn compute_dotproduct(a: &[Scalar], b: &[Scalar]) -> Scalar {
+  pub fn compute_dotproduct(a: &[G::ScalarField], b: &[G::ScalarField]) -> G::ScalarField {
     assert_eq!(a.len(), b.len());
     (0..a.len()).map(|i| a[i] * b[i]).sum()
   }
 
   pub fn prove(
-    gens: &DotProductProofGens,
+    gens: &DotProductProofGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape,
-    x_vec: &[Scalar],
-    blind_x: &Scalar,
-    a_vec: &[Scalar],
-    y: &Scalar,
-    blind_y: &Scalar,
-  ) -> (DotProductProofLog, GroupElement, GroupElement) {
+    random_tape: &mut RandomTape<G::ScalarField>,
+    x_vec: &[G::ScalarField],
+    blind_x: &G::ScalarField,
+    a_vec: &[G::ScalarField],
+    y: &G::ScalarField,
+    blind_y: &G::ScalarField,
+  ) -> (Self, G, G) {
     transcript.append_protocol_name(DotProductProofLog::protocol_name());
 
     let n = x_vec.len();
@@ -491,7 +453,7 @@ impl DotProductProofLog {
       let v2 = random_tape.random_vector(b"blinds_vec_2", 2 * n.log_2());
       (0..v1.len())
         .map(|i| (v1[i], v2[i]))
-        .collect::<Vec<(Scalar, Scalar)>>()
+        .collect::<Vec<(G::ScalarField, G::ScalarField)>>()
     };
 
     let Cx = x_vec.commit(blind_x, &gens.gens_n);
@@ -550,11 +512,11 @@ impl DotProductProofLog {
   pub fn verify(
     &self,
     n: usize,
-    gens: &DotProductProofGens,
+    gens: &DotProductProofGens<G>,
     transcript: &mut Transcript,
-    a: &[Scalar],
-    Cx: &GroupElement,
-    Cy: &GroupElement,
+    a: &[G::ScalarField],
+    Cx: &G,
+    Cy: &G,
   ) -> Result<(), ProofVerifyError> {
     assert_eq!(gens.n, n);
     assert_eq!(a.len(), n);
@@ -598,17 +560,23 @@ impl DotProductProofLog {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use ark_bls12_381::Fr;
+  use ark_ff::PrimeField;
   use ark_std::test_rng;
   use ark_std::UniformRand;
 
   #[test]
   fn check_knowledgeproof() {
+    check_knowledgeproof_helper::<Fr>()
+  }
+
+  fn check_knowledgeproof_helper<F: PrimeField>() {
     let mut prng = test_rng();
 
     let gens_1 = MultiCommitGens::new(1, b"test-knowledgeproof");
 
-    let x = Scalar::rand(&mut prng);
-    let r = Scalar::rand(&mut prng);
+    let x = F::rand(&mut prng);
+    let r = F::rand(&mut prng);
 
     let mut random_tape = RandomTape::new(b"proof");
     let mut prover_transcript = Transcript::new(b"example");
@@ -623,13 +591,17 @@ mod tests {
 
   #[test]
   fn check_equalityproof() {
+    check_equalityproof_helper::<Fr>()
+  }
+
+  fn check_equalityproof_helper<F: PrimeField>() {
     let mut prng = test_rng();
 
     let gens_1 = MultiCommitGens::new(1, b"test-equalityproof");
-    let v1 = Scalar::rand(&mut prng);
+    let v1 = F::rand(&mut prng);
     let v2 = v1;
-    let s1 = Scalar::rand(&mut prng);
-    let s2 = Scalar::rand(&mut prng);
+    let s1 = F::rand(&mut prng);
+    let s2 = F::rand(&mut prng);
 
     let mut random_tape = RandomTape::new(b"proof");
     let mut prover_transcript = Transcript::new(b"example");
@@ -651,15 +623,19 @@ mod tests {
 
   #[test]
   fn check_productproof() {
+    check_productproof_helper::<Fr>()
+  }
+
+  fn check_productproof_helper<F: PrimeField>() {
     let mut prng = test_rng();
 
     let gens_1 = MultiCommitGens::new(1, b"test-productproof");
-    let x = Scalar::rand(&mut prng);
-    let rX = Scalar::rand(&mut prng);
-    let y = Scalar::rand(&mut prng);
-    let rY = Scalar::rand(&mut prng);
+    let x = F::rand(&mut prng);
+    let rX = F::rand(&mut prng);
+    let y = F::rand(&mut prng);
+    let rY = F::rand(&mut prng);
     let z = x * y;
-    let rZ = Scalar::rand(&mut prng);
+    let rZ = F::rand(&mut prng);
 
     let mut random_tape = RandomTape::new(b"proof");
     let mut prover_transcript = Transcript::new(b"example");
@@ -683,6 +659,10 @@ mod tests {
 
   #[test]
   fn check_dotproductproof() {
+    check_dotproductproof_helper::<Fr>()
+  }
+
+  fn check_dotproductproof_helper<F: PrimeField>() {
     let mut prng = test_rng();
 
     let n = 1024;
@@ -690,15 +670,15 @@ mod tests {
     let gens_1 = MultiCommitGens::new(1, b"test-two");
     let gens_1024 = MultiCommitGens::new(n, b"test-1024");
 
-    let mut x: Vec<Scalar> = Vec::new();
-    let mut a: Vec<Scalar> = Vec::new();
+    let mut x: Vec<F> = Vec::new();
+    let mut a: Vec<F> = Vec::new();
     for _ in 0..n {
-      x.push(Scalar::rand(&mut prng));
-      a.push(Scalar::rand(&mut prng));
+      x.push(F::rand(&mut prng));
+      a.push(F::rand(&mut prng));
     }
     let y = DotProductProofLog::compute_dotproduct(&x, &a);
-    let r_x = Scalar::rand(&mut prng);
-    let r_y = Scalar::rand(&mut prng);
+    let r_x = F::rand(&mut prng);
+    let r_y = F::rand(&mut prng);
 
     let mut random_tape = RandomTape::new(b"proof");
     let mut prover_transcript = Transcript::new(b"example");
@@ -722,18 +702,21 @@ mod tests {
 
   #[test]
   fn check_dotproductproof_log() {
+    check_dotproductproof_log_helper::<Fr>()
+  }
+  fn check_dotproductproof_log_helper<F: PrimeField>() {
     let mut prng = test_rng();
 
     let n = 1024;
 
     let gens = DotProductProofGens::new(n, b"test-1024");
 
-    let x: Vec<Scalar> = (0..n).map(|_i| Scalar::rand(&mut prng)).collect();
-    let a: Vec<Scalar> = (0..n).map(|_i| Scalar::rand(&mut prng)).collect();
+    let x: Vec<F> = (0..n).map(|_i| F::rand(&mut prng)).collect();
+    let a: Vec<F> = (0..n).map(|_i| F::rand(&mut prng)).collect();
     let y = DotProductProof::compute_dotproduct(&x, &a);
 
-    let r_x = Scalar::rand(&mut prng);
-    let r_y = Scalar::rand(&mut prng);
+    let r_x = F::rand(&mut prng);
+    let r_y = F::rand(&mut prng);
 
     let mut random_tape = RandomTape::new(b"proof");
     let mut prover_transcript = Transcript::new(b"example");

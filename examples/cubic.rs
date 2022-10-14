@@ -12,7 +12,7 @@
 use ark_std::test_rng;
 use ark_std::UniformRand;
 use ark_std::{One, Zero};
-use libspartan::{InputsAssignment, Instance, SNARKGens, Scalar, VarsAssignment, SNARK};
+use libspartan::{InputsAssignment, Instance, SNARKGens, VarsAssignment, F, SNARK};
 use merlin::Transcript;
 
 #[allow(non_snake_case)]
@@ -33,11 +33,11 @@ fn produce_r1cs() -> (
 
   // We will encode the above constraints into three matrices, where
   // the coefficients in the matrix are in the little-endian byte order
-  let mut A: Vec<(usize, usize, Scalar)> = Vec::new();
-  let mut B: Vec<(usize, usize, Scalar)> = Vec::new();
-  let mut C: Vec<(usize, usize, Scalar)> = Vec::new();
+  let mut A: Vec<(usize, usize, F)> = Vec::new();
+  let mut B: Vec<(usize, usize, F)> = Vec::new();
+  let mut C: Vec<(usize, usize, F)> = Vec::new();
 
-  let one = Scalar::one();
+  let one = F::one();
 
   // R1CS is a set of three sparse matrices A B C, where is a row for every
   // constraint and a column for every entry in z = (vars, 1, inputs)
@@ -66,7 +66,7 @@ fn produce_r1cs() -> (
   // constraint 3 entries in (A,B,C)
   // constraint 3 is (Z3 + 5) * 1 - I0 = 0.
   A.push((3, 3, one));
-  A.push((3, num_vars, Scalar::from(5u32)));
+  A.push((3, num_vars, F::from(5u32)));
   B.push((3, num_vars, one));
   C.push((3, num_vars + 1, one));
 
@@ -74,14 +74,14 @@ fn produce_r1cs() -> (
 
   // compute a satisfying assignment
   let mut prng = test_rng();
-  let z0 = Scalar::rand(&mut prng);
+  let z0 = F::rand(&mut prng);
   let z1 = z0 * z0; // constraint 0
   let z2 = z1 * z0; // constraint 1
   let z3 = z2 + z0; // constraint 2
-  let i0 = z3 + Scalar::from(5u32); // constraint 3
+  let i0 = z3 + F::from(5u32); // constraint 3
 
   // create a VarsAssignment
-  let mut vars = vec![Scalar::zero(); num_vars];
+  let mut vars = vec![F::zero(); num_vars];
   vars[0] = z0;
   vars[1] = z1;
   vars[2] = z2;
@@ -89,7 +89,7 @@ fn produce_r1cs() -> (
   let assignment_vars = VarsAssignment::new(&vars).unwrap();
 
   // create an InputsAssignment
-  let mut inputs = vec![Scalar::zero(); num_inputs];
+  let mut inputs = vec![F::zero(); num_inputs];
   inputs[0] = i0;
   let assignment_inputs = InputsAssignment::new(&inputs).unwrap();
 

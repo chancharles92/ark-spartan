@@ -4,12 +4,10 @@ use super::dense_mlpoly::{
   DensePolynomial, EqPolynomial, PolyCommitment, PolyCommitmentGens, PolyEvalProof,
 };
 use super::errors::ProofVerifyError;
-use super::group::GroupElement;
 use super::math::Math;
 use super::nizk::{EqualityProof, KnowledgeProof, ProductProof};
 use super::r1csinstance::R1CSInstance;
 use super::random::RandomTape;
-use super::scalar::Scalar;
 use super::sparse_mlpoly::{SparsePolyEntry, SparsePolynomial};
 use super::sumcheck::ZKSumcheckInstanceProof;
 use super::timer::Timer;
@@ -22,27 +20,27 @@ use ark_std::{One, Zero};
 use merlin::Transcript;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
-pub struct R1CSProof {
-  comm_vars: PolyCommitment,
-  sc_proof_phase1: ZKSumcheckInstanceProof,
-  claims_phase2: (GroupElement, GroupElement, GroupElement, GroupElement),
-  pok_claims_phase2: (KnowledgeProof, ProductProof),
-  proof_eq_sc_phase1: EqualityProof,
-  sc_proof_phase2: ZKSumcheckInstanceProof,
-  comm_vars_at_ry: GroupElement,
-  proof_eval_vars_at_ry: PolyEvalProof,
-  proof_eq_sc_phase2: EqualityProof,
+pub struct R1CSProof<G: ProjectiveCurve> {
+  comm_vars: PolyCommitment<G>,
+  sc_proof_phase1: ZKSumcheckInstanceProof<G>,
+  claims_phase2: (G, G, G, G),
+  pok_claims_phase2: (KnowledgeProof<G>, ProductProof<G>),
+  proof_eq_sc_phase1: EqualityProof<G>,
+  sc_proof_phase2: ZKSumcheckInstanceProof<G>,
+  comm_vars_at_ry: G,
+  proof_eval_vars_at_ry: PolyEvalProof<G>,
+  proof_eq_sc_phase2: EqualityProof<G>,
 }
 
-pub struct R1CSSumcheckGens {
-  gens_1: MultiCommitGens,
-  gens_3: MultiCommitGens,
-  gens_4: MultiCommitGens,
+pub struct R1CSSumcheckGens<G> {
+  gens_1: MultiCommitGens<G>,
+  gens_3: MultiCommitGens<G>,
+  gens_4: MultiCommitGens<G>,
 }
 
 // TODO: fix passing gens_1_ref
-impl R1CSSumcheckGens {
-  pub fn new(label: &'static [u8], gens_1_ref: &MultiCommitGens) -> Self {
+impl<G> R1CSSumcheckGens<G> {
+  pub fn new(label: &'static [u8], gens_1_ref: &MultiCommitGens<G>) -> Self {
     let gens_1 = gens_1_ref.clone();
     let gens_3 = MultiCommitGens::new(3, label);
     let gens_4 = MultiCommitGens::new(4, label);
@@ -55,12 +53,12 @@ impl R1CSSumcheckGens {
   }
 }
 
-pub struct R1CSGens {
-  gens_sc: R1CSSumcheckGens,
-  gens_pc: PolyCommitmentGens,
+pub struct R1CSGens<G> {
+  gens_sc: R1CSSumcheckGens<G>,
+  gens_pc: PolyCommitmentGens<G>,
 }
 
-impl R1CSGens {
+impl<G> R1CSGens<G> {
   pub fn new(label: &'static [u8], _num_cons: usize, num_vars: usize) -> Self {
     let num_poly_vars = num_vars.log_2() as usize;
     let gens_pc = PolyCommitmentGens::new(num_poly_vars, label);
@@ -69,27 +67,33 @@ impl R1CSGens {
   }
 }
 
-impl R1CSProof {
+impl<G: ProjectiveCurve> R1CSProof<G> {
   fn prove_phase_one(
     num_rounds: usize,
-    evals_tau: &mut DensePolynomial,
-    evals_Az: &mut DensePolynomial,
-    evals_Bz: &mut DensePolynomial,
-    evals_Cz: &mut DensePolynomial,
-    gens: &R1CSSumcheckGens,
+    evals_tau: &mut DensePolynomial<G::ScalarField>,
+    evals_Az: &mut DensePolynomial<G::ScalarField>,
+    evals_Bz: &mut DensePolynomial<G::ScalarField>,
+    evals_Cz: &mut DensePolynomial<G::ScalarField>,
+    gens: &R1CSSumcheckGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape,
-  ) -> (ZKSumcheckInstanceProof, Vec<Scalar>, Vec<Scalar>, Scalar) {
-    let comb_func = |poly_A_comp: &Scalar,
-                     poly_B_comp: &Scalar,
-                     poly_C_comp: &Scalar,
-                     poly_D_comp: &Scalar|
-     -> Scalar { *poly_A_comp * (*poly_B_comp * *poly_C_comp - *poly_D_comp) };
+    random_tape: &mut RandomTape<G::ScalarField>,
+  ) -> (
+    ZKSumcheckInstanceProof<G>,
+    Vec<G::ScalarField>,
+    Vec<G::ScalarField>,
+    G::ScalarField,
+  ) {
+    let comb_func =
+      |poly_A_comp: &G::ScalarField,
+       poly_B_comp: &G::ScalarField,
+       poly_C_comp: &G::ScalarField,
+       poly_D_comp: &G::ScalarField|
+       -> G::ScalarField { *poly_A_comp * (*poly_B_comp * *poly_C_comp - *poly_D_comp) };
 
     let (sc_proof_phase_one, r, claims, blind_claim_postsc) =
       ZKSumcheckInstanceProof::prove_cubic_with_additive_term(
-        &Scalar::zero(), // claim is zero
-        &Scalar::zero(), // blind for claim is also zero
+        &G::ScalarField::zero(), // claim is zero
+        &G::ScalarField::zero(), // blind for claim is also zero
         num_rounds,
         evals_tau,
         evals_Az,
@@ -107,16 +111,22 @@ impl R1CSProof {
 
   fn prove_phase_two(
     num_rounds: usize,
-    claim: &Scalar,
-    blind_claim: &Scalar,
-    evals_z: &mut DensePolynomial,
-    evals_ABC: &mut DensePolynomial,
-    gens: &R1CSSumcheckGens,
+    claim: &G::ScalarField,
+    blind_claim: &G::ScalarField,
+    evals_z: &mut DensePolynomial<G::ScalarField>,
+    evals_ABC: &mut DensePolynomial<G::ScalarField>,
+    gens: &R1CSSumcheckGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape,
-  ) -> (ZKSumcheckInstanceProof, Vec<Scalar>, Vec<Scalar>, Scalar) {
-    let comb_func =
-      |poly_A_comp: &Scalar, poly_B_comp: &Scalar| -> Scalar { *poly_A_comp * *poly_B_comp };
+    random_tape: &mut RandomTape<G::ScalarField>,
+  ) -> (
+    ZKSumcheckInstanceProof<G>,
+    Vec<G::ScalarField>,
+    Vec<G::ScalarField>,
+    G::ScalarField,
+  ) {
+    let comb_func = |poly_A_comp: &G::ScalarField,
+                     poly_B_comp: &G::ScalarField|
+     -> G::ScalarField { *poly_A_comp * *poly_B_comp };
     let (sc_proof_phase_two, r, claims, blind_claim_postsc) = ZKSumcheckInstanceProof::prove_quad(
       claim,
       blind_claim,
@@ -138,13 +148,13 @@ impl R1CSProof {
   }
 
   pub fn prove(
-    inst: &R1CSInstance,
-    vars: Vec<Scalar>,
-    input: &[Scalar],
-    gens: &R1CSGens,
+    inst: &R1CSInstance<G::ScalarField>,
+    vars: Vec<G::ScalarField>,
+    input: &[G::ScalarField],
+    gens: &R1CSGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape,
-  ) -> (R1CSProof, Vec<Scalar>, Vec<Scalar>) {
+    random_tape: &mut RandomTape<G::ScalarField>,
+  ) -> (R1CSProof<G>, Vec<G::ScalarField>, Vec<G::ScalarField>) {
     let timer_prove = Timer::new("R1CSProof::prove");
     transcript.append_protocol_name(R1CSProof::protocol_name());
 
@@ -174,9 +184,9 @@ impl R1CSProof {
       let num_inputs = input.len();
       let num_vars = vars.len();
       let mut z = vars;
-      z.extend(&vec![Scalar::one()]); // add constant term in z
+      z.extend(&vec![G::ScalarField::one()]); // add constant term in z
       z.extend(input);
-      z.extend(&vec![Scalar::zero(); num_vars - num_inputs - 1]); // we will pad with zeros
+      z.extend(&vec![G::ScalarField::zero(); num_vars - num_inputs - 1]); // we will pad with zeros
       z
     };
 
@@ -278,7 +288,7 @@ impl R1CSProof {
       assert_eq!(evals_A.len(), evals_C.len());
       (0..evals_A.len())
         .map(|i| r_A * evals_A[i] + r_B * evals_B[i] + r_C * evals_C[i])
-        .collect::<Vec<Scalar>>()
+        .collect::<Vec<G::ScalarField>>()
     };
 
     // another instance of the sum-check protocol
@@ -310,7 +320,7 @@ impl R1CSProof {
     timer_polyeval.stop();
 
     // prove the final step of sum-check #2
-    let blind_eval_Z_at_ry = (Scalar::one() - ry[0]) * blind_eval;
+    let blind_eval_Z_at_ry = (G::ScalarField::one() - ry[0]) * blind_eval;
     let blind_expected_claim_postsc2 = claims_phase2[1] * blind_eval_Z_at_ry;
     let claim_post_phase2 = claims_phase2[0] * claims_phase2[1];
     let (proof_eq_sc_phase2, _C1, _C2) = EqualityProof::prove(
@@ -351,11 +361,11 @@ impl R1CSProof {
     &self,
     num_vars: usize,
     num_cons: usize,
-    input: &[Scalar],
-    evals: &(Scalar, Scalar, Scalar),
+    input: &[G::ScalarField],
+    evals: &(G::ScalarField, G::ScalarField, G::ScalarField),
     transcript: &mut Transcript,
-    gens: &R1CSGens,
-  ) -> Result<(Vec<Scalar>, Vec<Scalar>), ProofVerifyError> {
+    gens: &R1CSGens<G>,
+  ) -> Result<(Vec<G::ScalarField>, Vec<G::ScalarField>), ProofVerifyError> {
     transcript.append_protocol_name(R1CSProof::protocol_name());
 
     input.append_to_transcript(b"input", transcript);
@@ -372,7 +382,7 @@ impl R1CSProof {
     let tau = transcript.challenge_vector(b"challenge_tau", num_rounds_x);
 
     // verify the first sum-check instance
-    let claim_phase1 = Scalar::zero().commit(&Scalar::zero(), &gens.gens_sc.gens_1);
+    let claim_phase1 = G::ScalarField::zero().commit(&G::ScalarField::zero(), &gens.gens_sc.gens_1);
 
     let (comm_claim_post_phase1, rx) = self.sc_proof_phase1.verify(
       &claim_phase1,
@@ -400,8 +410,8 @@ impl R1CSProof {
     comm_Cz_claim.append_to_transcript(b"comm_Cz_claim", transcript);
     comm_prod_Az_Bz_claims.append_to_transcript(b"comm_prod_Az_Bz_claims", transcript);
 
-    let taus_bound_rx: Scalar = (0..rx.len())
-      .map(|i| rx[i] * tau[i] + (Scalar::one() - rx[i]) * (Scalar::one() - tau[i]))
+    let taus_bound_rx: G::ScalarField = (0..rx.len())
+      .map(|i| rx[i] * tau[i] + (G::ScalarField::one() - rx[i]) * (G::ScalarField::one() - tau[i]))
       .product();
     let expected_claim_post_phase1 =
       (*comm_prod_Az_Bz_claims - *comm_Cz_claim).mul(taus_bound_rx.into_repr());
@@ -423,7 +433,7 @@ impl R1CSProof {
     let scalars = vec![r_A.into_repr(), r_B.into_repr(), r_C.into_repr()];
     let bases = vec![*comm_Az_claim, *comm_Bz_claim, *comm_Cz_claim];
 
-    let bases_affine = GroupElement::batch_normalization_into_affine(bases.as_ref());
+    let bases_affine = G::batch_normalization_into_affine(bases.as_ref());
 
     let comm_claim_phase2 =
       VariableBaseMSM::multi_scalar_mul(bases_affine.as_ref(), scalars.as_ref());
@@ -449,7 +459,7 @@ impl R1CSProof {
 
     let poly_input_eval = {
       // constant term
-      let mut input_as_sparse_poly_entries = vec![SparsePolyEntry::new(0, Scalar::one())];
+      let mut input_as_sparse_poly_entries = vec![SparsePolyEntry::new(0, G::ScalarField::one())];
       //remaining inputs
       input_as_sparse_poly_entries.extend(
         (0..input.len())
@@ -459,13 +469,16 @@ impl R1CSProof {
       SparsePolynomial::new(n.log_2() as usize, input_as_sparse_poly_entries).evaluate(&ry[1..])
     };
 
-    // compute commitment to eval_Z_at_ry = (Scalar::one() - ry[0]) * self.eval_vars_at_ry + ry[0] * poly_input_eval
-    let scalars = vec![(Scalar::one() - ry[0]).into_repr(), ry[0].into_repr()];
+    // compute commitment to eval_Z_at_ry = (F::one() - ry[0]) * self.eval_vars_at_ry + ry[0] * poly_input_eval
+    let scalars = vec![
+      (G::ScalarField::one() - ry[0]).into_repr(),
+      ry[0].into_repr(),
+    ];
 
     let bases = vec![
       self.comm_vars_at_ry.into_affine(),
       poly_input_eval
-        .commit(&Scalar::zero(), &gens.gens_pc.gens.gens_1)
+        .commit(&G::ScalarField::zero(), &gens.gens_pc.gens.gens_1)
         .into_affine(),
     ];
 
@@ -494,7 +507,7 @@ mod tests {
   use ark_std::test_rng;
   use ark_std::UniformRand;
 
-  fn produce_tiny_r1cs() -> (R1CSInstance, Vec<Scalar>, Vec<Scalar>) {
+  fn produce_tiny_r1cs<F: PrimeField>() -> (R1CSInstance<F>, Vec<F>, Vec<F>) {
     // three constraints over five variables Z1, Z2, Z3, Z4, and Z5
     // rounded to the nearest power of two
     let num_cons = 128;
@@ -502,11 +515,11 @@ mod tests {
     let num_inputs = 2;
 
     // encode the above constraints into three matrices
-    let mut A: Vec<(usize, usize, Scalar)> = Vec::new();
-    let mut B: Vec<(usize, usize, Scalar)> = Vec::new();
-    let mut C: Vec<(usize, usize, Scalar)> = Vec::new();
+    let mut A: Vec<(usize, usize, F)> = Vec::new();
+    let mut B: Vec<(usize, usize, F)> = Vec::new();
+    let mut C: Vec<(usize, usize, F)> = Vec::new();
 
-    let one = Scalar::one();
+    let one = F::one();
     // constraint 0 entries
     // (Z1 + Z2) * I0 - Z3 = 0;
     A.push((0, 0, one));
@@ -529,22 +542,22 @@ mod tests {
 
     // compute a satisfying assignment
     let mut prng = test_rng();
-    let i0 = Scalar::rand(&mut prng);
-    let i1 = Scalar::rand(&mut prng);
-    let z1 = Scalar::rand(&mut prng);
-    let z2 = Scalar::rand(&mut prng);
+    let i0 = F::rand(&mut prng);
+    let i1 = F::rand(&mut prng);
+    let z1 = F::rand(&mut prng);
+    let z2 = F::rand(&mut prng);
     let z3 = (z1 + z2) * i0; // constraint 1: (Z1 + Z2) * I0 - Z3 = 0;
     let z4 = (z1 + i1) * z3; // constraint 2: (Z1 + I1) * (Z3) - Z4 = 0
-    let z5 = Scalar::zero(); //constraint 3
+    let z5 = F::zero(); //constraint 3
 
-    let mut vars = vec![Scalar::zero(); num_vars];
+    let mut vars = vec![F::zero(); num_vars];
     vars[0] = z1;
     vars[1] = z2;
     vars[2] = z3;
     vars[3] = z4;
     vars[4] = z5;
 
-    let mut input = vec![Scalar::zero(); num_inputs];
+    let mut input = vec![F::zero(); num_inputs];
     input[0] = i0;
     input[1] = i1;
 

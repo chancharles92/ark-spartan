@@ -4,9 +4,7 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::too_many_arguments)]
 use super::super::errors::ProofVerifyError;
-use super::super::group::GroupElement;
 use super::super::math::Math;
-use super::super::scalar::Scalar;
 use super::super::transcript::ProofTranscript;
 use ark_ec::{msm::VariableBaseMSM, ProjectiveCurve};
 use ark_ff::{Field, PrimeField};
@@ -16,12 +14,12 @@ use core::iter;
 use merlin::Transcript;
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct BulletReductionProof {
-  L_vec: Vec<GroupElement>,
-  R_vec: Vec<GroupElement>,
+pub struct BulletReductionProof<G:ProjectiveCurve> {
+  L_vec: Vec<G>,
+  R_vec: Vec<G>,
 }
 
-impl BulletReductionProof {
+impl<G: ProjectiveCurve> BulletReductionProof<G> {
   /// Create an inner-product proof.
   ///
   /// The proof is created with respect to the bases \\(G\\).
@@ -34,21 +32,14 @@ impl BulletReductionProof {
   /// either 0 or a power of 2.
   pub fn prove(
     transcript: &mut Transcript,
-    Q: &GroupElement,
-    G_vec: &[GroupElement],
-    H: &GroupElement,
-    a_vec: &[Scalar],
-    b_vec: &[Scalar],
-    blind: &Scalar,
-    blinds_vec: &[(Scalar, Scalar)],
-  ) -> (
-    BulletReductionProof,
-    GroupElement,
-    Scalar,
-    Scalar,
-    GroupElement,
-    Scalar,
-  ) {
+    Q: &G,
+    G_vec: &[G],
+    H: &G,
+    a_vec: &[G::ScalarField],
+    b_vec: &[G::ScalarField],
+    blind: &G::ScalarField,
+    blinds_vec: &[(G::ScalarField, G::ScalarField)],
+  ) -> (Self, G, G::ScalarField, G::ScalarField, G, G::ScalarField) {
     // Create slices G, H, a, b backed by their respective
     // vectors.  This lets us reslice as we compress the lengths
     // of the vectors in the main loop below.
@@ -97,7 +88,7 @@ impl BulletReductionProof {
         .map(|x| *x)
         .collect::<Vec<_>>();
 
-      let bases = GroupElement::batch_normalization_into_affine(bases.as_ref());
+      let bases = G::batch_normalization_into_affine(bases.as_ref());
 
       let L = VariableBaseMSM::multi_scalar_mul(bases.as_ref(), scalars.as_ref());
 
@@ -115,7 +106,7 @@ impl BulletReductionProof {
         .map(|x| *x)
         .collect::<Vec<_>>();
 
-      let bases = GroupElement::batch_normalization_into_affine(bases.as_ref());
+      let bases = G::batch_normalization_into_affine(bases.as_ref());
 
       let R = VariableBaseMSM::multi_scalar_mul(bases.as_ref(), scalars.as_ref());
 
@@ -162,7 +153,14 @@ impl BulletReductionProof {
     &self,
     n: usize,
     transcript: &mut Transcript,
-  ) -> Result<(Vec<Scalar>, Vec<Scalar>, Vec<Scalar>), ProofVerifyError> {
+  ) -> Result<
+    (
+      Vec<G::ScalarField>,
+      Vec<G::ScalarField>,
+      Vec<G::ScalarField>,
+    ),
+    ProofVerifyError,
+  > {
     let lg_n = self.L_vec.len();
     if lg_n >= 32 {
       // 4 billion multiplications should be enough for anyone
@@ -187,7 +185,7 @@ impl BulletReductionProof {
       .iter()
       .map(|x| x.inverse().unwrap())
       .collect::<Vec<_>>();
-    let mut all_inv = Scalar::one();
+    let mut all_inv = G::ScalarField::one();
     challenges_inv.iter().for_each(|c| all_inv *= *c);
 
     // 3. Compute u_i^2 and (1/u_i)^2
@@ -219,21 +217,21 @@ impl BulletReductionProof {
   pub fn verify(
     &self,
     n: usize,
-    a: &[Scalar],
+    a: &[G::ScalarField],
     transcript: &mut Transcript,
-    Gamma: &GroupElement,
-    G: &[GroupElement],
-  ) -> Result<(GroupElement, GroupElement, Scalar), ProofVerifyError> {
+    Gamma: &G,
+    G: &[G],
+  ) -> Result<(G, G, G::ScalarField), ProofVerifyError> {
     let (u_sq, u_inv_sq, s) = self.verification_scalars(n, transcript)?;
 
-    let G = GroupElement::batch_normalization_into_affine(G);
+    let group_element = G::batch_normalization_into_affine(G);
     let scalars = s.iter().map(|x| x.into_repr()).collect::<Vec<_>>();
 
     let G_hat = VariableBaseMSM::multi_scalar_mul(G.as_ref(), scalars.as_ref());
 
     let a_hat = inner_product(a, &s);
 
-    let bases = GroupElement::batch_normalization_into_affine(
+    let bases = G::batch_normalization_into_affine(
       &[self.L_vec.as_slice(), self.R_vec.as_slice(), &[*Gamma]]
         .concat()
         .as_ref(),
@@ -241,7 +239,7 @@ impl BulletReductionProof {
     let scalars = u_sq
       .iter()
       .chain(u_inv_sq.iter())
-      .chain(iter::once(&Scalar::one()))
+      .chain(iter::once(&G::ScalarField::one()))
       .map(|x| x.into_repr())
       .collect::<Vec<_>>();
 
@@ -256,12 +254,12 @@ impl BulletReductionProof {
 ///    {\langle {\mathbf{a}}, {\mathbf{b}} \rangle} = \sum\_{i=0}^{n-1} a\_i \cdot b\_i.
 /// \\]
 /// Panics if the lengths of \\(\mathbf{a}\\) and \\(\mathbf{b}\\) are not equal.
-pub fn inner_product(a: &[Scalar], b: &[Scalar]) -> Scalar {
+pub fn inner_product<F: PrimeField>(a: &[F], b: &[F]) -> F {
   assert!(
     a.len() == b.len(),
     "inner_product(a,b): lengths of vectors do not match"
   );
-  let mut out = Scalar::zero();
+  let mut out = F::zero();
   for i in 0..a.len() {
     out += a[i] * b[i];
   }
