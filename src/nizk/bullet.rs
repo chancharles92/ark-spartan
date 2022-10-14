@@ -9,7 +9,7 @@ use super::super::transcript::ProofTranscript;
 use ark_ec::{msm::VariableBaseMSM, ProjectiveCurve};
 use ark_ff::{Field, PrimeField};
 use ark_serialize::*;
-use ark_std::{One, Zero};
+use ark_std::One;
 use core::iter;
 use merlin::Transcript;
 
@@ -43,9 +43,9 @@ impl<G: ProjectiveCurve> BulletReductionProof<G> {
     // Create slices G, H, a, b backed by their respective
     // vectors.  This lets us reslice as we compress the lengths
     // of the vectors in the main loop below.
-    let mut G = &mut G_vec.to_owned()[..];
-    let mut a = &mut a_vec.to_owned()[..];
-    let mut b = &mut b_vec.to_owned()[..];
+    let mut G: &mut [G] = &mut G_vec.to_owned()[..];
+    let mut a: &mut [G::ScalarField] = &mut a_vec.to_owned()[..];
+    let mut b: &mut [G::ScalarField] = &mut b_vec.to_owned()[..];
 
     // All of the input vectors must have a length that is a power of two.
     let mut n = G.len();
@@ -110,10 +110,11 @@ impl<G: ProjectiveCurve> BulletReductionProof<G> {
 
       let R = VariableBaseMSM::multi_scalar_mul(bases.as_ref(), scalars.as_ref());
 
-      transcript.append_point(b"L", &L);
-      transcript.append_point(b"R", &R);
+      <Transcript as ProofTranscript<G>>::append_point(transcript, b"L", &L);
+      <Transcript as ProofTranscript<G>>::append_point(transcript, b"R", &R);
 
-      let u = transcript.challenge_scalar(b"u");
+      let u = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"u");
+
       let u_inv = u.inverse().unwrap();
 
       for i in 0..n {
@@ -174,9 +175,11 @@ impl<G: ProjectiveCurve> BulletReductionProof<G> {
     // 1. Recompute x_k,...,x_1 based on the proof transcript
     let mut challenges = Vec::with_capacity(lg_n);
     for (L, R) in self.L_vec.iter().zip(self.R_vec.iter()) {
-      transcript.append_point(b"L", L);
-      transcript.append_point(b"R", R);
-      challenges.push(transcript.challenge_scalar(b"u"));
+      <Transcript as ProofTranscript<G>>::append_point(transcript, b"L", &L);
+      <Transcript as ProofTranscript<G>>::append_point(transcript, b"R", &R);
+      challenges.push(<Transcript as ProofTranscript<G>>::challenge_scalar(
+        transcript, b"u",
+      ));
     }
 
     // 2. Compute 1/(u_k...u_1) and 1/u_k, ..., 1/u_1
@@ -227,7 +230,7 @@ impl<G: ProjectiveCurve> BulletReductionProof<G> {
     let group_element = G::batch_normalization_into_affine(G);
     let scalars = s.iter().map(|x| x.into_repr()).collect::<Vec<_>>();
 
-    let G_hat = VariableBaseMSM::multi_scalar_mul(G.as_ref(), scalars.as_ref());
+    let G_hat = VariableBaseMSM::multi_scalar_mul(group_element.as_ref(), scalars.as_ref());
 
     let a_hat = inner_product(a, &s);
 

@@ -1,5 +1,3 @@
-use crate::transcript::AppendToTranscript;
-
 use super::dense_mlpoly::DensePolynomial;
 use super::errors::ProofVerifyError;
 use super::math::Math;
@@ -9,6 +7,7 @@ use super::sparse_mlpoly::{
   SparseMatPolyCommitmentGens, SparseMatPolyEvalProof, SparseMatPolynomial,
 };
 use super::timer::Timer;
+use crate::transcript::AppendToTranscript;
 use ark_ec::ProjectiveCurve;
 use ark_ff::PrimeField;
 use ark_serialize::*;

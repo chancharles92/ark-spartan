@@ -9,21 +9,22 @@
 //!
 //! [here]: https://medium.com/@VitalikButerin/quadratic-arithmetic-programs-from-zero-to-hero-f6d558cea649
 #![allow(clippy::assertions_on_result_states)]
+use ark_bls12_381::Fr;
+use ark_bls12_381::G1Projective;
+use ark_ff::PrimeField;
 use ark_std::test_rng;
-use ark_std::UniformRand;
-use ark_std::{One, Zero};
-use libspartan::{InputsAssignment, Instance, SNARKGens, VarsAssignment, F, SNARK};
+use libspartan::{InputsAssignment, Instance, SNARKGens, VarsAssignment, SNARK};
 use merlin::Transcript;
 
 #[allow(non_snake_case)]
-fn produce_r1cs() -> (
+fn produce_r1cs<F: PrimeField>() -> (
   usize,
   usize,
   usize,
   usize,
-  Instance,
-  VarsAssignment,
-  InputsAssignment,
+  Instance<F>,
+  VarsAssignment<F>,
+  InputsAssignment<F>,
 ) {
   // parameters of the R1CS instance
   let num_cons = 4;
@@ -118,10 +119,10 @@ fn main() {
     inst,
     assignment_vars,
     assignment_inputs,
-  ) = produce_r1cs();
+  ) = produce_r1cs::<Fr>();
 
   // produce public parameters
-  let gens = SNARKGens::new(num_cons, num_vars, num_inputs, num_non_zero_entries);
+  let gens = SNARKGens::<G1Projective>::new(num_cons, num_vars, num_inputs, num_non_zero_entries);
 
   // create a commitment to the R1CS instance
   let (comm, decomm) = SNARK::encode(&inst, &gens);

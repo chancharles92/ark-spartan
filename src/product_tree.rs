@@ -121,16 +121,19 @@ pub struct LayerProof<F: PrimeField> {
 
 #[allow(dead_code)]
 impl<F: PrimeField> LayerProof<F> {
-  pub fn verify(
+  pub fn verify<G>(
     &self,
     claim: F,
     num_rounds: usize,
     degree_bound: usize,
     transcript: &mut Transcript,
-  ) -> (F, Vec<F>) {
+  ) -> (F, Vec<F>)
+  where
+    G: ProjectiveCurve<ScalarField = F>,
+  {
     self
       .proof
-      .verify(claim, num_rounds, degree_bound, transcript)
+      .verify::<G>(claim, num_rounds, degree_bound, transcript)
       .unwrap()
   }
 }
@@ -145,16 +148,19 @@ pub struct LayerProofBatched<F: PrimeField> {
 
 #[allow(dead_code)]
 impl<F: PrimeField> LayerProofBatched<F> {
-  pub fn verify(
+  pub fn verify<G>(
     &self,
     claim: F,
     num_rounds: usize,
     degree_bound: usize,
     transcript: &mut Transcript,
-  ) -> (F, Vec<F>) {
+  ) -> (F, Vec<F>)
+  where
+    G: ProjectiveCurve<ScalarField = F>,
+  {
     self
       .proof
-      .verify(claim, num_rounds, degree_bound, transcript)
+      .verify::<G>(claim, num_rounds, degree_bound, transcript)
       .unwrap()
   }
 }
@@ -191,7 +197,7 @@ impl<F: PrimeField> ProductCircuitEvalProof<F> {
       let comb_func_prod = |poly_A_comp: &F, poly_B_comp: &F, poly_C_comp: &F| -> F {
         *poly_A_comp * *poly_B_comp * *poly_C_comp
       };
-      let (proof_prod, rand_prod, claims_prod) = SumcheckInstanceProof::prove_cubic(
+      let (proof_prod, rand_prod, claims_prod) = SumcheckInstanceProof::<F>::prove_cubic::<_, G>(
         &claim,
         num_rounds_prod,
         &mut circuit.left_vec[layer_id],
@@ -241,7 +247,7 @@ impl<F: PrimeField> ProductCircuitEvalProof<F> {
     //let mut num_rounds = 0;
     assert_eq!(self.proof.len(), num_layers);
     for (num_rounds, i) in (0..num_layers).enumerate() {
-      let (claim_last, rand_prod) = self.proof[i].verify(claim, num_rounds, 3, transcript);
+      let (claim_last, rand_prod) = self.proof[i].verify::<G>(claim, num_rounds, 3, transcript);
 
       let claims_prod = &self.proof[i].claims;
       <Transcript as ProofTranscript<G>>::append_scalar(
@@ -354,15 +360,16 @@ impl<F: PrimeField> ProductCircuitEvalProofBatched<F> {
         .map(|i| claims_to_verify[i] * coeff_vec[i])
         .sum();
 
-      let (proof, rand_prod, claims_prod, claims_dotp) = SumcheckInstanceProof::prove_cubic_batched(
-        &claim,
-        num_rounds_prod,
-        poly_vec_par,
-        poly_vec_seq,
-        &coeff_vec,
-        comb_func_prod,
-        transcript,
-      );
+      let (proof, rand_prod, claims_prod, claims_dotp) =
+        SumcheckInstanceProof::<F>::prove_cubic_batched::<_, G>(
+          &claim,
+          num_rounds_prod,
+          poly_vec_par,
+          poly_vec_seq,
+          &coeff_vec,
+          comb_func_prod,
+          transcript,
+        );
 
       let (claims_prod_left, claims_prod_right, _claims_eq) = claims_prod;
       for i in 0..prod_circuit_vec.len() {
@@ -465,7 +472,7 @@ impl<F: PrimeField> ProductCircuitEvalProofBatched<F> {
         .map(|i| claims_to_verify[i] * coeff_vec[i])
         .sum();
 
-      let (claim_last, rand_prod) = self.proof[i].verify(claim, num_rounds, 3, transcript);
+      let (claim_last, rand_prod) = self.proof[i].verify::<G>(claim, num_rounds, 3, transcript);
 
       let claims_prod_left = &self.proof[i].claims_prod_left;
       let claims_prod_right = &self.proof[i].claims_prod_right;

@@ -26,13 +26,16 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     SumcheckInstanceProof { compressed_polys }
   }
 
-  pub fn verify(
+  pub fn verify<G>(
     &self,
     claim: F,
     num_rounds: usize,
     degree_bound: usize,
     transcript: &mut Transcript,
-  ) -> Result<(F, Vec<F>), ProofVerifyError> {
+  ) -> Result<(F, Vec<F>), ProofVerifyError>
+  where
+    G: ProjectiveCurve<ScalarField = F>,
+  {
     let mut e = claim;
     let mut r: Vec<F> = Vec::new();
 
@@ -48,10 +51,11 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       assert_eq!(poly.eval_at_zero() + poly.eval_at_one(), e);
 
       // append the prover's message to the transcript
-      poly.append_to_transcript(b"poly", transcript);
+      <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
 
       //derive the verifier's challenge for the next round
-      let r_i = transcript.challenge_scalar(b"challenge_nextround");
+      let r_i =
+        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
 
       r.push(r_i);
 
@@ -100,10 +104,11 @@ impl<G: ProjectiveCurve> ZKSumcheckInstanceProof<G> {
       let comm_poly = &self.comm_polys[i];
 
       // append the prover's polynomial to the transcript
-      comm_poly.append_to_transcript(b"comm_poly", transcript);
+      <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_poly", comm_poly);
 
       //derive the verifier's challenge for the next round
-      let r_i = transcript.challenge_scalar(b"challenge_nextround");
+      let r_i =
+        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
 
       // verify the proof of sum-check and evals
       let res = {
@@ -115,11 +120,19 @@ impl<G: ProjectiveCurve> ZKSumcheckInstanceProof<G> {
         let comm_eval = &self.comm_evals[i];
 
         // add two claims to transcript
-        comm_claim_per_round.append_to_transcript(b"comm_claim_per_round", transcript);
-        comm_eval.append_to_transcript(b"comm_eval", transcript);
+        <Transcript as ProofTranscript<G>>::append_point(
+          transcript,
+          b"comm_claim_per_round",
+          comm_claim_per_round,
+        );
+        <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_eval", comm_eval);
 
         // produce two weights
-        let w = transcript.challenge_vector(b"combine_two_claims_to_one", 2);
+        let w = <Transcript as ProofTranscript<G>>::challenge_vector(
+          transcript,
+          b"combine_two_claims_to_one",
+          2,
+        );
 
         // compute a weighted sum of the RHS
         let w_repr = w.iter().map(|x| x.into_repr()).collect::<Vec<_>>();
@@ -174,7 +187,7 @@ impl<G: ProjectiveCurve> ZKSumcheckInstanceProof<G> {
 }
 
 impl<F: PrimeField> SumcheckInstanceProof<F> {
-  pub fn prove_cubic<Func>(
+  pub fn prove_cubic<Func, G>(
     claim: &F,
     num_rounds: usize,
     poly_A: &mut DensePolynomial<F>,
@@ -185,6 +198,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
   ) -> (Self, Vec<F>, Vec<F>)
   where
     Func: Fn(&F, &F, &F) -> F,
+    G: ProjectiveCurve<ScalarField = F>,
   {
     let mut e = *claim;
     let mut r: Vec<F> = Vec::new();
@@ -225,10 +239,12 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       let poly = UniPoly::from_evals(&evals);
 
       // append the prover's message to the transcript
-      poly.append_to_transcript(b"poly", transcript);
+      <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
 
       //derive the verifier's challenge for the next round
-      let r_j = transcript.challenge_scalar(b"challenge_nextround");
+      let r_j =
+        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
+
       r.push(r_j);
       // bound all tables to the verifier's challenege
       poly_A.bound_poly_var_top(&r_j);
@@ -245,7 +261,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     )
   }
 
-  pub fn prove_cubic_batched<Func>(
+  pub fn prove_cubic_batched<Func, G>(
     claim: &F,
     num_rounds: usize,
     poly_vec_par: (
@@ -264,6 +280,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
   ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F), (Vec<F>, Vec<F>, Vec<F>))
   where
     Func: Fn(&F, &F, &F) -> F,
+    G: ProjectiveCurve<ScalarField = F>,
   {
     let (poly_A_vec_par, poly_B_vec_par, poly_C_par) = poly_vec_par;
     let (poly_A_vec_seq, poly_B_vec_seq, poly_C_vec_seq) = poly_vec_seq;
@@ -358,10 +375,11 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       let poly = UniPoly::from_evals(&evals);
 
       // append the prover's message to the transcript
-      poly.append_to_transcript(b"poly", transcript);
+      <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
 
       //derive the verifier's challenge for the next round
-      let r_j = transcript.challenge_scalar(b"challenge_nextround");
+      let r_j =
+        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
       r.push(r_j);
 
       // bound all tables to the verifier's challenege
@@ -469,11 +487,12 @@ impl<G: ProjectiveCurve> ZKSumcheckInstanceProof<G> {
       };
 
       // append the prover's message to the transcript
-      comm_poly.append_to_transcript(b"comm_poly", transcript);
+      <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_poly", &comm_poly);
       comm_polys.push(comm_poly);
 
       //derive the verifier's challenge for the next round
-      let r_j = transcript.challenge_scalar(b"challenge_nextround");
+      let r_j =
+        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
 
       // bound all tables to the verifier's challenege
       poly_A.bound_poly_var_top(&r_j);
@@ -494,11 +513,19 @@ impl<G: ProjectiveCurve> ZKSumcheckInstanceProof<G> {
         // for efficiency we batch them using random weights
 
         // add two claims to transcript
-        comm_claim_per_round.append_to_transcript(b"comm_claim_per_round", transcript);
-        comm_eval.append_to_transcript(b"comm_eval", transcript);
+        <Transcript as ProofTranscript<G>>::append_point(
+          transcript,
+          b"comm_claim_per_round",
+          &comm_claim_per_round,
+        );
+        <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_eval", &comm_eval);
 
         // produce two weights
-        let w = transcript.challenge_vector(b"combine_two_claims_to_one", 2);
+        let w = <Transcript as ProofTranscript<G>>::challenge_vector(
+          transcript,
+          b"combine_two_claims_to_one",
+          2,
+        );
 
         // compute a weighted sum of the RHS
         let target = w[0] * claim_per_round + w[1] * eval;
@@ -658,11 +685,12 @@ impl<G: ProjectiveCurve> ZKSumcheckInstanceProof<G> {
       };
 
       // append the prover's message to the transcript
-      comm_poly.append_to_transcript(b"comm_poly", transcript);
+      <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_poly", &comm_poly);
       comm_polys.push(comm_poly);
 
       //derive the verifier's challenge for the next round
-      let r_j = transcript.challenge_scalar(b"challenge_nextround");
+      let r_j =
+        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
 
       // bound all tables to the verifier's challenege
       poly_A.bound_poly_var_top(&r_j);
@@ -685,11 +713,19 @@ impl<G: ProjectiveCurve> ZKSumcheckInstanceProof<G> {
         // for efficiency we batch them using random weights
 
         // add two claims to transcript
-        comm_claim_per_round.append_to_transcript(b"comm_claim_per_round", transcript);
-        comm_eval.append_to_transcript(b"comm_eval", transcript);
+        <Transcript as ProofTranscript<G>>::append_point(
+          transcript,
+          b"comm_claim_per_round",
+          &comm_claim_per_round,
+        );
+        <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_eval", &comm_eval);
 
         // produce two weights
-        let w = transcript.challenge_vector(b"combine_two_claims_to_one", 2);
+        let w = <Transcript as ProofTranscript<G>>::challenge_vector(
+          transcript,
+          b"combine_two_claims_to_one",
+          2,
+        );
 
         // compute a weighted sum of the RHS
         let target = w[0] * claim_per_round + w[1] * eval;
