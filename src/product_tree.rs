@@ -4,9 +4,9 @@ use super::dense_mlpoly::EqPolynomial;
 use super::math::Math;
 use super::sumcheck::SumcheckInstanceProof;
 use super::transcript::ProofTranscript;
+use ark_ec::ProjectiveCurve;
 use ark_ff::PrimeField;
 use ark_serialize::*;
-use ark_std::One;
 use merlin::Transcript;
 
 #[derive(Debug)]
@@ -15,7 +15,7 @@ pub struct ProductCircuit<F> {
   right_vec: Vec<DensePolynomial<F>>,
 }
 
-impl<F> ProductCircuit<F> {
+impl<F: PrimeField> ProductCircuit<F> {
   fn compute_layer(
     inp_left: &DensePolynomial<F>,
     inp_right: &DensePolynomial<F>,
@@ -35,8 +35,8 @@ impl<F> ProductCircuit<F> {
   }
 
   pub fn new(poly: &DensePolynomial<F>) -> Self {
-    let mut left_vec: Vec<DensePolynomial> = Vec::new();
-    let mut right_vec: Vec<DensePolynomial> = Vec::new();
+    let mut left_vec: Vec<DensePolynomial<F>> = Vec::new();
+    let mut right_vec: Vec<DensePolynomial<F>> = Vec::new();
 
     let num_layers = poly.len().log_2() as usize;
     let (outp_left, outp_right) = poly.split(poly.len() / 2);
@@ -70,7 +70,7 @@ pub struct DotProductCircuit<F> {
   weight: DensePolynomial<F>,
 }
 
-impl<F> DotProductCircuit<F> {
+impl<F: PrimeField> DotProductCircuit<F> {
   pub fn new(
     left: DensePolynomial<F>,
     right: DensePolynomial<F>,
@@ -172,8 +172,11 @@ pub struct ProductCircuitEvalProofBatched<F: PrimeField> {
 
 impl<F: PrimeField> ProductCircuitEvalProof<F> {
   #![allow(dead_code)]
-  pub fn prove(circuit: &mut ProductCircuit<F>, transcript: &mut Transcript) -> (Self, F, Vec<F>) {
-    let mut proof: Vec<LayerProof> = Vec::new();
+  pub fn prove<G>(circuit: &mut ProductCircuit<F>, transcript: &mut Transcript) -> (Self, F, Vec<F>)
+  where
+    G: ProjectiveCurve<ScalarField = F>,
+  {
+    let mut proof: Vec<LayerProof<F>> = Vec::new();
     let num_layers = circuit.left_vec.len();
 
     let mut claim = circuit.evaluate();
@@ -197,12 +200,22 @@ impl<F: PrimeField> ProductCircuitEvalProof<F> {
         comb_func_prod,
         transcript,
       );
+      <Transcript as ProofTranscript<G>>::append_scalar(
+        transcript,
+        b"claim_prod_left",
+        &claims_prod[0],
+      );
 
-      transcript.append_scalar(b"claim_prod_left", &claims_prod[0]);
-      transcript.append_scalar(b"claim_prod_right", &claims_prod[1]);
+      <Transcript as ProofTranscript<G>>::append_scalar(
+        transcript,
+        b"claim_prod_right",
+        &claims_prod[1],
+      );
 
       // produce a random challenge
-      let r_layer = transcript.challenge_scalar(b"challenge_r_layer");
+      let r_layer =
+        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_r_layer");
+
       claim = claims_prod[0] + r_layer * (claims_prod[1] - claims_prod[0]);
 
       let mut ext = vec![r_layer];
@@ -218,7 +231,10 @@ impl<F: PrimeField> ProductCircuitEvalProof<F> {
     (ProductCircuitEvalProof { proof }, claim, rand)
   }
 
-  pub fn verify(&self, eval: F, len: usize, transcript: &mut Transcript) -> (F, Vec<F>) {
+  pub fn verify<G>(&self, eval: F, len: usize, transcript: &mut Transcript) -> (F, Vec<F>)
+  where
+    G: ProjectiveCurve<ScalarField = F>,
+  {
     let num_layers = len.log_2() as usize;
     let mut claim = eval;
     let mut rand: Vec<F> = Vec::new();
@@ -228,8 +244,17 @@ impl<F: PrimeField> ProductCircuitEvalProof<F> {
       let (claim_last, rand_prod) = self.proof[i].verify(claim, num_rounds, 3, transcript);
 
       let claims_prod = &self.proof[i].claims;
-      transcript.append_scalar(b"claim_prod_left", &claims_prod[0]);
-      transcript.append_scalar(b"claim_prod_right", &claims_prod[1]);
+      <Transcript as ProofTranscript<G>>::append_scalar(
+        transcript,
+        b"claim_prod_left",
+        &claims_prod[0],
+      );
+
+      <Transcript as ProofTranscript<G>>::append_scalar(
+        transcript,
+        b"claim_prod_right",
+        &claims_prod[1],
+      );
 
       assert_eq!(rand.len(), rand_prod.len());
       let eq: F = (0..rand.len())
@@ -238,7 +263,8 @@ impl<F: PrimeField> ProductCircuitEvalProof<F> {
       assert_eq!(claims_prod[0] * claims_prod[1] * eq, claim_last);
 
       // produce a random challenge
-      let r_layer = transcript.challenge_scalar(b"challenge_r_layer");
+      let r_layer =
+        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_r_layer");
       claim = (F::one() - r_layer) * claims_prod[0] + r_layer * claims_prod[1];
       let mut ext = vec![r_layer];
       ext.extend(rand_prod);
@@ -250,16 +276,19 @@ impl<F: PrimeField> ProductCircuitEvalProof<F> {
 }
 
 impl<F: PrimeField> ProductCircuitEvalProofBatched<F> {
-  pub fn prove(
+  pub fn prove<G>(
     prod_circuit_vec: &mut Vec<&mut ProductCircuit<F>>,
     dotp_circuit_vec: &mut Vec<&mut DotProductCircuit<F>>,
     transcript: &mut Transcript,
-  ) -> (Self, Vec<F>) {
+  ) -> (Self, Vec<F>)
+  where
+    G: ProjectiveCurve<ScalarField = F>,
+  {
     assert!(!prod_circuit_vec.is_empty());
 
     let mut claims_dotp_final = (Vec::new(), Vec::new(), Vec::new());
 
-    let mut proof_layers: Vec<LayerProofBatched> = Vec::new();
+    let mut proof_layers: Vec<LayerProofBatched<F>> = Vec::new();
     let num_layers = prod_circuit_vec[0].left_vec.len();
     let mut claims_to_verify = (0..prod_circuit_vec.len())
       .map(|i| prod_circuit_vec[i].evaluate())
@@ -270,7 +299,7 @@ impl<F: PrimeField> ProductCircuitEvalProofBatched<F> {
       let len = prod_circuit_vec[0].left_vec[layer_id].len()
         + prod_circuit_vec[0].right_vec[layer_id].len();
 
-      let mut poly_C_par = DensePolynomial::new(EqPolynomial::new(rand.clone()).evals());
+      let mut poly_C_par = DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals());
       assert_eq!(poly_C_par.len(), len / 2);
 
       let num_rounds_prod = poly_C_par.len().log_2() as usize;
@@ -278,8 +307,8 @@ impl<F: PrimeField> ProductCircuitEvalProofBatched<F> {
         *poly_A_comp * *poly_B_comp * *poly_C_comp
       };
 
-      let mut poly_A_batched_par: Vec<&mut DensePolynomial> = Vec::new();
-      let mut poly_B_batched_par: Vec<&mut DensePolynomial> = Vec::new();
+      let mut poly_A_batched_par: Vec<&mut DensePolynomial<F>> = Vec::new();
+      let mut poly_B_batched_par: Vec<&mut DensePolynomial<F>> = Vec::new();
       for prod_circuit in prod_circuit_vec.iter_mut() {
         poly_A_batched_par.push(&mut prod_circuit.left_vec[layer_id]);
         poly_B_batched_par.push(&mut prod_circuit.right_vec[layer_id])
@@ -291,9 +320,9 @@ impl<F: PrimeField> ProductCircuitEvalProofBatched<F> {
       );
 
       // prepare sequential instances that don't share poly_C
-      let mut poly_A_batched_seq: Vec<&mut DensePolynomial> = Vec::new();
-      let mut poly_B_batched_seq: Vec<&mut DensePolynomial> = Vec::new();
-      let mut poly_C_batched_seq: Vec<&mut DensePolynomial> = Vec::new();
+      let mut poly_A_batched_seq: Vec<&mut DensePolynomial<F>> = Vec::new();
+      let mut poly_B_batched_seq: Vec<&mut DensePolynomial<F>> = Vec::new();
+      let mut poly_C_batched_seq: Vec<&mut DensePolynomial<F>> = Vec::new();
       if layer_id == 0 && !dotp_circuit_vec.is_empty() {
         // add additional claims
         for item in dotp_circuit_vec.iter() {
@@ -316,8 +345,11 @@ impl<F: PrimeField> ProductCircuitEvalProofBatched<F> {
       );
 
       // produce a fresh set of coeffs and a joint claim
-      let coeff_vec =
-        transcript.challenge_vector(b"rand_coeffs_next_layer", claims_to_verify.len());
+      let coeff_vec = <Transcript as ProofTranscript<G>>::challenge_vector(
+        transcript,
+        b"rand_coeffs_next_layer",
+        claims_to_verify.len(),
+      );
       let claim = (0..claims_to_verify.len())
         .map(|i| claims_to_verify[i] * coeff_vec[i])
         .sum();
@@ -334,22 +366,46 @@ impl<F: PrimeField> ProductCircuitEvalProofBatched<F> {
 
       let (claims_prod_left, claims_prod_right, _claims_eq) = claims_prod;
       for i in 0..prod_circuit_vec.len() {
-        transcript.append_scalar(b"claim_prod_left", &claims_prod_left[i]);
-        transcript.append_scalar(b"claim_prod_right", &claims_prod_right[i]);
+        <Transcript as ProofTranscript<G>>::append_scalar(
+          transcript,
+          b"claim_prod_left",
+          &claims_prod_left[i],
+        );
+
+        <Transcript as ProofTranscript<G>>::append_scalar(
+          transcript,
+          b"claim_prod_right",
+          &claims_prod_right[i],
+        );
       }
 
       if layer_id == 0 && !dotp_circuit_vec.is_empty() {
         let (claims_dotp_left, claims_dotp_right, claims_dotp_weight) = claims_dotp;
         for i in 0..dotp_circuit_vec.len() {
-          transcript.append_scalar(b"claim_dotp_left", &claims_dotp_left[i]);
-          transcript.append_scalar(b"claim_dotp_right", &claims_dotp_right[i]);
-          transcript.append_scalar(b"claim_dotp_weight", &claims_dotp_weight[i]);
+          <Transcript as ProofTranscript<G>>::append_scalar(
+            transcript,
+            b"claim_dotp_left",
+            &claims_dotp_left[i],
+          );
+
+          <Transcript as ProofTranscript<G>>::append_scalar(
+            transcript,
+            b"claim_dotp_right",
+            &claims_dotp_right[i],
+          );
+
+          <Transcript as ProofTranscript<G>>::append_scalar(
+            transcript,
+            b"claim_dotp_weight",
+            &claims_dotp_weight[i],
+          );
         }
         claims_dotp_final = (claims_dotp_left, claims_dotp_right, claims_dotp_weight);
       }
 
       // produce a random challenge to condense two claims into a single claim
-      let r_layer = transcript.challenge_scalar(b"challenge_r_layer");
+      let r_layer =
+        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_r_layer");
 
       claims_to_verify = (0..prod_circuit_vec.len())
         .map(|i| claims_prod_left[i] + r_layer * (claims_prod_right[i] - claims_prod_left[i]))
@@ -375,13 +431,16 @@ impl<F: PrimeField> ProductCircuitEvalProofBatched<F> {
     )
   }
 
-  pub fn verify(
+  pub fn verify<G>(
     &self,
     claims_prod_vec: &[F],
     claims_dotp_vec: &[F],
     len: usize,
     transcript: &mut Transcript,
-  ) -> (Vec<F>, Vec<F>, Vec<F>) {
+  ) -> (Vec<F>, Vec<F>, Vec<F>)
+  where
+    G: ProjectiveCurve<ScalarField = F>,
+  {
     let num_layers = len.log_2() as usize;
     let mut rand: Vec<F> = Vec::new();
     //let mut num_rounds = 0;
@@ -395,8 +454,11 @@ impl<F: PrimeField> ProductCircuitEvalProofBatched<F> {
       }
 
       // produce random coefficients, one for each instance
-      let coeff_vec =
-        transcript.challenge_vector(b"rand_coeffs_next_layer", claims_to_verify.len());
+      let coeff_vec = <Transcript as ProofTranscript<G>>::challenge_vector(
+        transcript,
+        b"rand_coeffs_next_layer",
+        claims_to_verify.len(),
+      );
 
       // produce a joint claim
       let claim = (0..claims_to_verify.len())
@@ -411,8 +473,17 @@ impl<F: PrimeField> ProductCircuitEvalProofBatched<F> {
       assert_eq!(claims_prod_right.len(), claims_prod_vec.len());
 
       for i in 0..claims_prod_vec.len() {
-        transcript.append_scalar(b"claim_prod_left", &claims_prod_left[i]);
-        transcript.append_scalar(b"claim_prod_right", &claims_prod_right[i]);
+        <Transcript as ProofTranscript<G>>::append_scalar(
+          transcript,
+          b"claim_prod_left",
+          &claims_prod_left[i],
+        );
+
+        <Transcript as ProofTranscript<G>>::append_scalar(
+          transcript,
+          b"claim_prod_right",
+          &claims_prod_right[i],
+        );
       }
 
       assert_eq!(rand.len(), rand_prod.len());
@@ -428,9 +499,23 @@ impl<F: PrimeField> ProductCircuitEvalProofBatched<F> {
         let num_prod_instances = claims_prod_vec.len();
         let (claims_dotp_left, claims_dotp_right, claims_dotp_weight) = &self.claims_dotp;
         for i in 0..claims_dotp_left.len() {
-          transcript.append_scalar(b"claim_dotp_left", &claims_dotp_left[i]);
-          transcript.append_scalar(b"claim_dotp_right", &claims_dotp_right[i]);
-          transcript.append_scalar(b"claim_dotp_weight", &claims_dotp_weight[i]);
+          <Transcript as ProofTranscript<G>>::append_scalar(
+            transcript,
+            b"claim_dotp_left",
+            &claims_dotp_left[i],
+          );
+
+          <Transcript as ProofTranscript<G>>::append_scalar(
+            transcript,
+            b"claim_dotp_right",
+            &claims_dotp_right[i],
+          );
+
+          <Transcript as ProofTranscript<G>>::append_scalar(
+            transcript,
+            b"claim_dotp_weight",
+            &claims_dotp_weight[i],
+          );
 
           claim_expected += coeff_vec[i + num_prod_instances]
             * claims_dotp_left[i]
@@ -442,7 +527,8 @@ impl<F: PrimeField> ProductCircuitEvalProofBatched<F> {
       assert_eq!(claim_expected, claim_last);
 
       // produce a random challenge
-      let r_layer = transcript.challenge_scalar(b"challenge_r_layer");
+      let r_layer =
+        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_r_layer");
 
       claims_to_verify = (0..claims_prod_left.len())
         .map(|i| claims_prod_left[i] + r_layer * (claims_prod_right[i] - claims_prod_left[i]))

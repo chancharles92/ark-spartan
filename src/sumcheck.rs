@@ -174,21 +174,21 @@ impl<G: ProjectiveCurve> ZKSumcheckInstanceProof<G> {
 }
 
 impl<F: PrimeField> SumcheckInstanceProof<F> {
-  pub fn prove_cubic(
+  pub fn prove_cubic<Func>(
     claim: &F,
     num_rounds: usize,
     poly_A: &mut DensePolynomial<F>,
     poly_B: &mut DensePolynomial<F>,
     poly_C: &mut DensePolynomial<F>,
-    comb_func: F,
+    comb_func: Func,
     transcript: &mut Transcript,
   ) -> (Self, Vec<F>, Vec<F>)
   where
-    F: Fn(&F, &F, &F) -> F,
+    Func: Fn(&F, &F, &F) -> F,
   {
     let mut e = *claim;
     let mut r: Vec<F> = Vec::new();
-    let mut cubic_polys: Vec<CompressedUniPoly> = Vec::new();
+    let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
     for _j in 0..num_rounds {
       let mut eval_point_0 = F::zero();
       let mut eval_point_2 = F::zero();
@@ -245,7 +245,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     )
   }
 
-  pub fn prove_cubic_batched(
+  pub fn prove_cubic_batched<Func>(
     claim: &F,
     num_rounds: usize,
     poly_vec_par: (
@@ -259,11 +259,11 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       &mut Vec<&mut DensePolynomial<F>>,
     ),
     coeffs: &[F],
-    comb_func: F,
+    comb_func: Func,
     transcript: &mut Transcript,
   ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F), (Vec<F>, Vec<F>, Vec<F>))
   where
-    F: Fn(&F, &F, &F) -> F,
+    Func: Fn(&F, &F, &F) -> F,
   {
     let (poly_A_vec_par, poly_B_vec_par, poly_C_par) = poly_vec_par;
     let (poly_A_vec_seq, poly_B_vec_seq, poly_C_vec_seq) = poly_vec_seq;
@@ -271,7 +271,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     //let (poly_A_vec_seq, poly_B_vec_seq, poly_C_vec_seq) = poly_vec_seq;
     let mut e = *claim;
     let mut r: Vec<F> = Vec::new();
-    let mut cubic_polys: Vec<CompressedUniPoly> = Vec::new();
+    let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
     for _j in 0..num_rounds {
       let mut evals: Vec<(F, F, F)> = Vec::new();
@@ -414,17 +414,17 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 }
 
 impl<G: ProjectiveCurve> ZKSumcheckInstanceProof<G> {
-  pub fn prove_quad(
+  pub fn prove_quad<Func>(
     claim: &G::ScalarField,
     blind_claim: &G::ScalarField,
     num_rounds: usize,
     poly_A: &mut DensePolynomial<G::ScalarField>,
     poly_B: &mut DensePolynomial<G::ScalarField>,
-    comb_func: G::ScalarField,
+    comb_func: Func,
     gens_1: &MultiCommitGens<G>,
     gens_n: &MultiCommitGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G::ScalarField>,
+    random_tape: &mut RandomTape<G>,
   ) -> (
     Self,
     Vec<G::ScalarField>,
@@ -432,7 +432,7 @@ impl<G: ProjectiveCurve> ZKSumcheckInstanceProof<G> {
     G::ScalarField,
   )
   where
-    G: Fn(&G::ScalarField, &G::ScalarField) -> G::ScalarField,
+    Func: Fn(&G::ScalarField, &G::ScalarField) -> G::ScalarField,
   {
     let (blinds_poly, blinds_evals) = (
       random_tape.random_vector(b"blinds_poly", num_rounds),
@@ -444,7 +444,7 @@ impl<G: ProjectiveCurve> ZKSumcheckInstanceProof<G> {
     let mut r: Vec<G::ScalarField> = Vec::new();
     let mut comm_polys: Vec<G> = Vec::new();
     let mut comm_evals: Vec<G> = Vec::new();
-    let mut proofs: Vec<DotProductProof> = Vec::new();
+    let mut proofs: Vec<DotProductProof<G>> = Vec::new();
 
     for j in 0..num_rounds {
       let (poly, comm_poly) = {
@@ -575,7 +575,7 @@ impl<G: ProjectiveCurve> ZKSumcheckInstanceProof<G> {
     )
   }
 
-  pub fn prove_cubic_with_additive_term(
+  pub fn prove_cubic_with_additive_term<Func>(
     claim: &G::ScalarField,
     blind_claim: &G::ScalarField,
     num_rounds: usize,
@@ -583,11 +583,11 @@ impl<G: ProjectiveCurve> ZKSumcheckInstanceProof<G> {
     poly_B: &mut DensePolynomial<G::ScalarField>,
     poly_C: &mut DensePolynomial<G::ScalarField>,
     poly_D: &mut DensePolynomial<G::ScalarField>,
-    comb_func: G::ScalarField,
+    comb_func: Func,
     gens_1: &MultiCommitGens<G>,
     gens_n: &MultiCommitGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G::ScalarField>,
+    random_tape: &mut RandomTape<G>,
   ) -> (
     Self,
     Vec<G::ScalarField>,
@@ -595,7 +595,7 @@ impl<G: ProjectiveCurve> ZKSumcheckInstanceProof<G> {
     G::ScalarField,
   )
   where
-    G: Fn(&G::ScalarField, &G::ScalarField, &G::ScalarField, &G::ScalarField) -> G::ScalarField,
+    Func: Fn(&G::ScalarField, &G::ScalarField, &G::ScalarField, &G::ScalarField) -> G::ScalarField,
   {
     let (blinds_poly, blinds_evals) = (
       random_tape.random_vector(b"blinds_poly", num_rounds),
@@ -608,7 +608,7 @@ impl<G: ProjectiveCurve> ZKSumcheckInstanceProof<G> {
     let mut r: Vec<G::ScalarField> = Vec::new();
     let mut comm_polys: Vec<G> = Vec::new();
     let mut comm_evals: Vec<G> = Vec::new();
-    let mut proofs: Vec<DotProductProof> = Vec::new();
+    let mut proofs: Vec<DotProductProof<G>> = Vec::new();
 
     for j in 0..num_rounds {
       let (poly, comm_poly) = {

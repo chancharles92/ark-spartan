@@ -19,20 +19,20 @@ use core::cmp::Ordering;
 use merlin::Transcript;
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct SparseMatEntry<F:PrimeField> {
+pub struct SparseMatEntry<F: PrimeField> {
   row: usize,
   col: usize,
   val: F,
 }
 
-impl<F:PrimeField> SparseMatEntry<F> {
+impl<F: PrimeField> SparseMatEntry<F> {
   pub fn new(row: usize, col: usize, val: F) -> Self {
     SparseMatEntry { row, col, val }
   }
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct SparseMatPolynomial<F:PrimeField> {
+pub struct SparseMatPolynomial<F: PrimeField> {
   num_vars_x: usize,
   num_vars_y: usize,
   M: Vec<SparseMatEntry<F>>,
@@ -45,17 +45,21 @@ pub struct Derefs<F> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct DerefsCommitment<G:ProjectiveCurve> {
+pub struct DerefsCommitment<G: ProjectiveCurve> {
   comm_ops_val: PolyCommitment<G>,
 }
 
-impl<F> Derefs<F> {
+impl<F: PrimeField> Derefs<F> {
   pub fn new(row_ops_val: Vec<DensePolynomial<F>>, col_ops_val: Vec<DensePolynomial<F>>) -> Self {
     assert_eq!(row_ops_val.len(), col_ops_val.len());
 
     let derefs = {
       // combine all polynomials into a single polynomial (used below to produce a single commitment)
-      let comb = DensePolynomial::merge(row_ops_val.iter().chain(col_ops_val.iter()));
+      let comb = DensePolynomial::merge(
+        [row_ops_val.as_slice(), col_ops_val.as_slice()]
+          .concat()
+          .as_slice(),
+      );
 
       Derefs {
         row_ops_val,
@@ -92,7 +96,7 @@ impl<G: ProjectiveCurve> DerefsEvalProof<G> {
     evals: Vec<G::ScalarField>,
     gens: &PolyCommitmentGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G::ScalarField>,
+    random_tape: &mut RandomTape<G>,
   ) -> PolyEvalProof<G> {
     assert_eq!(
       joint_poly.get_num_vars(),
@@ -100,12 +104,16 @@ impl<G: ProjectiveCurve> DerefsEvalProof<G> {
     );
 
     // append the claimed evaluations to transcript
-    evals.append_to_transcript(b"evals_ops_val", transcript);
+    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"evals_ops_val", &evals);
 
     // n-to-1 reduction
     let (r_joint, eval_joint) = {
-      let challenges =
-        transcript.challenge_vector(b"challenge_combine_n_to_one", evals.len().log_2() as usize);
+      let challenges = <Transcript as ProofTranscript<G>>::challenge_vector(
+        transcript,
+        b"challenge_combine_n_to_one",
+        evals.len().log_2() as usize,
+      );
+
       let mut poly_evals = DensePolynomial::new(evals);
       for i in (0..challenges.len()).rev() {
         poly_evals.bound_poly_var_bot(&challenges[i]);
@@ -115,11 +123,12 @@ impl<G: ProjectiveCurve> DerefsEvalProof<G> {
       let mut r_joint = challenges;
       r_joint.extend(r);
 
-      debug_assert_eq!(joint_poly.evaluate(&r_joint), joint_claim_eval);
+      debug_assert_eq!(joint_poly.evaluate::<G>(&r_joint), joint_claim_eval);
       (r_joint, joint_claim_eval)
     };
     // decommit the joint polynomial at r_joint
-    eval_joint.append_to_transcript(b"joint_claim_eval", transcript);
+    <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"joint_claim_eval", &eval_joint);
+
     let (proof_derefs, _comm_derefs_eval) = PolyEvalProof::prove(
       joint_poly,
       None,
@@ -142,9 +151,12 @@ impl<G: ProjectiveCurve> DerefsEvalProof<G> {
     r: &[G::ScalarField],
     gens: &PolyCommitmentGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G::ScalarField>,
+    random_tape: &mut RandomTape<G>,
   ) -> Self {
-    transcript.append_protocol_name(DerefsEvalProof::protocol_name());
+    <Transcript as ProofTranscript<G>>::append_protocol_name(
+      transcript,
+      DerefsEvalProof::<G>::protocol_name(),
+    );
 
     let evals = {
       let mut evals = eval_row_ops_val_vec.to_owned();
@@ -167,11 +179,14 @@ impl<G: ProjectiveCurve> DerefsEvalProof<G> {
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
     // append the claimed evaluations to transcript
-    evals.append_to_transcript(b"evals_ops_val", transcript);
+    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"evals_ops_val", &evals);
 
     // n-to-1 reduction
-    let challenges =
-      transcript.challenge_vector(b"challenge_combine_n_to_one", evals.len().log_2() as usize);
+    let challenges = <Transcript as ProofTranscript<G>>::challenge_vector(
+      transcript,
+      b"challenge_combine_n_to_one",
+      evals.len().log_2() as usize,
+    );
     let mut poly_evals = DensePolynomial::new(evals);
     for i in (0..challenges.len()).rev() {
       poly_evals.bound_poly_var_bot(&challenges[i]);
@@ -182,7 +197,11 @@ impl<G: ProjectiveCurve> DerefsEvalProof<G> {
     r_joint.extend(r);
 
     // decommit the joint polynomial at r_joint
-    joint_claim_eval.append_to_transcript(b"joint_claim_eval", transcript);
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"joint_claim_eval",
+      &joint_claim_eval,
+    );
 
     proof.verify_plain(gens, transcript, &r_joint, &joint_claim_eval, comm)
   }
@@ -197,7 +216,10 @@ impl<G: ProjectiveCurve> DerefsEvalProof<G> {
     comm: &DerefsCommitment<G>,
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
-    transcript.append_protocol_name(DerefsEvalProof::protocol_name());
+    <Transcript as ProofTranscript<G>>::append_protocol_name(
+      transcript,
+      DerefsEvalProof::<G>::protocol_name(),
+    );
     let mut evals = eval_row_ops_val_vec.to_owned();
     evals.extend(eval_col_ops_val_vec);
     evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
@@ -213,7 +235,7 @@ impl<G: ProjectiveCurve> DerefsEvalProof<G> {
   }
 }
 
-impl<G:ProjectiveCurve> AppendToTranscript<G> for DerefsCommitment<G> {
+impl<G: ProjectiveCurve> AppendToTranscript<G> for DerefsCommitment<G> {
   fn append_to_transcript(&self, label: &'static [u8], transcript: &mut Transcript) {
     transcript.append_message(b"derefs_commitment", b"begin_derefs_commitment");
     self.comm_ops_val.append_to_transcript(label, transcript);
@@ -228,15 +250,15 @@ struct AddrTimestamps<F> {
   audit_ts: DensePolynomial<F>,
 }
 
-impl<F> AddrTimestamps<F> {
+impl<F: PrimeField> AddrTimestamps<F> {
   pub fn new(num_cells: usize, num_ops: usize, ops_addr: Vec<Vec<usize>>) -> Self {
     for item in ops_addr.iter() {
       assert_eq!(item.len(), num_ops);
     }
 
     let mut audit_ts = vec![0usize; num_cells];
-    let mut ops_addr_vec: Vec<DensePolynomial> = Vec::new();
-    let mut read_ts_vec: Vec<DensePolynomial> = Vec::new();
+    let mut ops_addr_vec: Vec<DensePolynomial<F>> = Vec::new();
+    let mut read_ts_vec: Vec<DensePolynomial<F>> = Vec::new();
     for ops_addr_inst in ops_addr.iter() {
       let mut read_ts = vec![0usize; num_ops];
 
@@ -278,7 +300,7 @@ impl<F> AddrTimestamps<F> {
   pub fn deref(&self, mem_val: &[F]) -> Vec<DensePolynomial<F>> {
     (0..self.ops_addr.len())
       .map(|i| AddrTimestamps::deref_mem(&self.ops_addr_usize[i], mem_val))
-      .collect::<Vec<DensePolynomial>>()
+      .collect::<Vec<DensePolynomial<F>>>()
   }
 }
 
@@ -297,7 +319,7 @@ pub struct SparseMatPolyCommitmentGens<G> {
   gens_derefs: PolyCommitmentGens<G>,
 }
 
-impl<G> SparseMatPolyCommitmentGens<G> {
+impl<G: ProjectiveCurve> SparseMatPolyCommitmentGens<G> {
   pub fn new(
     label: &'static [u8],
     num_vars_x: usize,
@@ -327,7 +349,7 @@ impl<G> SparseMatPolyCommitmentGens<G> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct SparseMatPolyCommitment<G:ProjectiveCurve> {
+pub struct SparseMatPolyCommitment<G: ProjectiveCurve> {
   batch_size: usize,
   num_ops: usize,
   num_mem_cells: usize,
@@ -335,7 +357,7 @@ pub struct SparseMatPolyCommitment<G:ProjectiveCurve> {
   comm_comb_mem: PolyCommitment<G>,
 }
 
-impl<G:ProjectiveCurve> AppendToTranscript<G> for SparseMatPolyCommitment<G> {
+impl<G: ProjectiveCurve> AppendToTranscript<G> for SparseMatPolyCommitment<G> {
   fn append_to_transcript(&self, _label: &'static [u8], transcript: &mut Transcript) {
     transcript.append_u64(b"batch_size", self.batch_size as u64);
     transcript.append_u64(b"num_ops", self.num_ops as u64);
@@ -349,7 +371,7 @@ impl<G:ProjectiveCurve> AppendToTranscript<G> for SparseMatPolyCommitment<G> {
   }
 }
 
-impl<F:PrimeField> SparseMatPolynomial<F> {
+impl<F: PrimeField> SparseMatPolynomial<F> {
   pub fn new(num_vars_x: usize, num_vars_y: usize, M: Vec<SparseMatEntry<F>>) -> Self {
     SparseMatPolynomial {
       num_vars_x,
@@ -393,7 +415,7 @@ impl<F:PrimeField> SparseMatPolynomial<F> {
 
     let mut ops_row_vec: Vec<Vec<usize>> = Vec::new();
     let mut ops_col_vec: Vec<Vec<usize>> = Vec::new();
-    let mut val_vec: Vec<DensePolynomial> = Vec::new();
+    let mut val_vec: Vec<DensePolynomial<F>> = Vec::new();
     for poly in sparse_polys {
       let (ops_row, ops_col, val) = poly.sparse_to_dense_vecs(N);
       ops_row_vec.push(ops_row);
@@ -414,13 +436,15 @@ impl<F:PrimeField> SparseMatPolynomial<F> {
 
     // combine polynomials into a single polynomial for commitment purposes
     let comb_ops = DensePolynomial::merge(
-      row
-        .ops_addr
-        .iter()
-        .chain(row.read_ts.iter())
-        .chain(col.ops_addr.iter())
-        .chain(col.read_ts.iter())
-        .chain(val_vec.iter()),
+      [
+        row.ops_addr.as_slice(),
+        row.read_ts.as_slice(),
+        col.ops_addr.as_slice(),
+        col.read_ts.as_slice(),
+        val_vec.as_slice(),
+      ]
+      .concat()
+      .as_slice(),
     );
     let mut comb_mem = row.audit_ts.clone();
     comb_mem.extend(&col.audit_ts);
@@ -512,7 +536,7 @@ impl<F:PrimeField> SparseMatPolynomial<F> {
   }
 }
 
-impl<F> MultiSparseMatPolynomialAsDense<F> {
+impl<F: PrimeField> MultiSparseMatPolynomialAsDense<F> {
   pub fn deref(&self, row_mem_val: &[F], col_mem_val: &[F]) -> Derefs<F> {
     let row_ops_val = self.row.deref(row_mem_val);
     let col_ops_val = self.col.deref(col_mem_val);
@@ -534,7 +558,7 @@ struct Layers<F> {
   prod_layer: ProductLayer<F>,
 }
 
-impl<F> Layers<F> {
+impl<F: PrimeField> Layers<F> {
   fn build_hash_layer(
     eval_table: &[F],
     addrs_vec: &[DensePolynomial<F>],
@@ -574,8 +598,8 @@ impl<F> Layers<F> {
     );
 
     // hash read and write that depends on #instances
-    let mut poly_read_hashed_vec: Vec<DensePolynomial> = Vec::new();
-    let mut poly_write_hashed_vec: Vec<DensePolynomial> = Vec::new();
+    let mut poly_read_hashed_vec: Vec<DensePolynomial<F>> = Vec::new();
+    let mut poly_write_hashed_vec: Vec<DensePolynomial<F>> = Vec::new();
     for i in 0..addrs_vec.len() {
       let (addrs, derefs, read_ts) = (&addrs_vec[i], &derefs_vec[i], &read_ts_vec[i]);
       assert_eq!(addrs.len(), derefs.len());
@@ -629,10 +653,10 @@ impl<F> Layers<F> {
     let prod_init = ProductCircuit::new(&poly_init_hashed);
     let prod_read_vec = (0..poly_read_hashed_vec.len())
       .map(|i| ProductCircuit::new(&poly_read_hashed_vec[i]))
-      .collect::<Vec<ProductCircuit>>();
+      .collect::<Vec<ProductCircuit<F>>>();
     let prod_write_vec = (0..poly_write_hashed_vec.len())
       .map(|i| ProductCircuit::new(&poly_write_hashed_vec[i]))
-      .collect::<Vec<ProductCircuit>>();
+      .collect::<Vec<ProductCircuit<F>>>();
     let prod_audit = ProductCircuit::new(&poly_audit_hashed);
 
     // subset audit check
@@ -666,7 +690,7 @@ struct PolyEvalNetwork<F> {
   col_layers: Layers<F>,
 }
 
-impl<F> PolyEvalNetwork<F> {
+impl<F: PrimeField> PolyEvalNetwork<F> {
   pub fn new(
     dense: &MultiSparseMatPolynomialAsDense<F>,
     derefs: &Derefs<F>,
@@ -709,19 +733,19 @@ impl<G: ProjectiveCurve> HashLayerProof<G> {
     // decommit ops-addr at rand_ops
     let mut eval_ops_addr_vec: Vec<G::ScalarField> = Vec::new();
     for i in 0..addr_timestamps.ops_addr.len() {
-      let eval_ops_addr = addr_timestamps.ops_addr[i].evaluate(rand_ops);
+      let eval_ops_addr = addr_timestamps.ops_addr[i].evaluate::<G>(rand_ops);
       eval_ops_addr_vec.push(eval_ops_addr);
     }
 
     // decommit read_ts at rand_ops
     let mut eval_read_ts_vec: Vec<G::ScalarField> = Vec::new();
     for i in 0..addr_timestamps.read_ts.len() {
-      let eval_read_ts = addr_timestamps.read_ts[i].evaluate(rand_ops);
+      let eval_read_ts = addr_timestamps.read_ts[i].evaluate::<G>(rand_ops);
       eval_read_ts_vec.push(eval_read_ts);
     }
 
     // decommit audit-ts at rand_mem
-    let eval_audit_ts = addr_timestamps.audit_ts.evaluate(rand_mem);
+    let eval_audit_ts = addr_timestamps.audit_ts.evaluate::<G>(rand_mem);
 
     (eval_ops_addr_vec, eval_read_ts_vec, eval_audit_ts)
   }
@@ -732,18 +756,21 @@ impl<G: ProjectiveCurve> HashLayerProof<G> {
     derefs: &Derefs<G::ScalarField>,
     gens: &SparseMatPolyCommitmentGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G::ScalarField>,
+    random_tape: &mut RandomTape<G>,
   ) -> Self {
-    transcript.append_protocol_name(HashLayerProof::protocol_name());
+    <Transcript as ProofTranscript<G>>::append_protocol_name(
+      transcript,
+      HashLayerProof::<G>::protocol_name(),
+    );
 
     let (rand_mem, rand_ops) = rand;
 
     // decommit derefs at rand_ops
     let eval_row_ops_val = (0..derefs.row_ops_val.len())
-      .map(|i| derefs.row_ops_val[i].evaluate(rand_ops))
+      .map(|i| derefs.row_ops_val[i].evaluate::<G>(rand_ops))
       .collect::<Vec<G::ScalarField>>();
     let eval_col_ops_val = (0..derefs.col_ops_val.len())
-      .map(|i| derefs.col_ops_val[i].evaluate(rand_ops))
+      .map(|i| derefs.col_ops_val[i].evaluate::<G>(rand_ops))
       .collect::<Vec<G::ScalarField>>();
     let proof_derefs = DerefsEvalProof::prove(
       derefs,
@@ -759,11 +786,11 @@ impl<G: ProjectiveCurve> HashLayerProof<G> {
     // evaluate row_addr, row_read-ts, col_addr, col_read-ts, val at rand_ops
     // evaluate row_audit_ts and col_audit_ts at rand_mem
     let (eval_row_addr_vec, eval_row_read_ts_vec, eval_row_audit_ts) =
-      HashLayerProof::prove_helper((rand_mem, rand_ops), &dense.row);
+      HashLayerProof::<G>::prove_helper((rand_mem, rand_ops), &dense.row);
     let (eval_col_addr_vec, eval_col_read_ts_vec, eval_col_audit_ts) =
-      HashLayerProof::prove_helper((rand_mem, rand_ops), &dense.col);
+      HashLayerProof::<G>::prove_helper((rand_mem, rand_ops), &dense.col);
     let eval_val_vec = (0..dense.val.len())
-      .map(|i| dense.val[i].evaluate(rand_ops))
+      .map(|i| dense.val[i].evaluate::<G>(rand_ops))
       .collect::<Vec<G::ScalarField>>();
 
     // form a single decommitment using comm_comb_ops
@@ -774,8 +801,11 @@ impl<G: ProjectiveCurve> HashLayerProof<G> {
     evals_ops.extend(&eval_col_read_ts_vec);
     evals_ops.extend(&eval_val_vec);
     evals_ops.resize(evals_ops.len().next_power_of_two(), G::ScalarField::zero());
-    evals_ops.append_to_transcript(b"claim_evals_ops", transcript);
-    let challenges_ops = transcript.challenge_vector(
+
+    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"claim_evals_ops", &evals_ops);
+
+    let challenges_ops = <Transcript as ProofTranscript<G>>::challenge_vector(
+      transcript,
       b"challenge_combine_n_to_one",
       evals_ops.len().log_2() as usize,
     );
@@ -788,8 +818,16 @@ impl<G: ProjectiveCurve> HashLayerProof<G> {
     let joint_claim_eval_ops = poly_evals_ops[0];
     let mut r_joint_ops = challenges_ops;
     r_joint_ops.extend(rand_ops);
-    debug_assert_eq!(dense.comb_ops.evaluate(&r_joint_ops), joint_claim_eval_ops);
-    joint_claim_eval_ops.append_to_transcript(b"joint_claim_eval_ops", transcript);
+    debug_assert_eq!(
+      dense.comb_ops.evaluate::<G>(&r_joint_ops),
+      joint_claim_eval_ops
+    );
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"joint_claim_eval_ops",
+      &joint_claim_eval_ops,
+    );
+
     let (proof_ops, _comm_ops_eval) = PolyEvalProof::prove(
       &dense.comb_ops,
       None,
@@ -803,8 +841,10 @@ impl<G: ProjectiveCurve> HashLayerProof<G> {
 
     // form a single decommitment using comb_comb_mem at rand_mem
     let evals_mem: Vec<G::ScalarField> = vec![eval_row_audit_ts, eval_col_audit_ts];
-    evals_mem.append_to_transcript(b"claim_evals_mem", transcript);
-    let challenges_mem = transcript.challenge_vector(
+
+    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"claim_evals_mem", &evals_mem);
+    let challenges_mem = <Transcript as ProofTranscript<G>>::challenge_vector(
+      transcript,
       b"challenge_combine_two_to_one",
       evals_mem.len().log_2() as usize,
     );
@@ -817,8 +857,16 @@ impl<G: ProjectiveCurve> HashLayerProof<G> {
     let joint_claim_eval_mem = poly_evals_mem[0];
     let mut r_joint_mem = challenges_mem;
     r_joint_mem.extend(rand_mem);
-    debug_assert_eq!(dense.comb_mem.evaluate(&r_joint_mem), joint_claim_eval_mem);
-    joint_claim_eval_mem.append_to_transcript(b"joint_claim_eval_mem", transcript);
+    debug_assert_eq!(
+      dense.comb_mem.evaluate::<G>(&r_joint_mem),
+      joint_claim_eval_mem
+    );
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"joint_claim_eval_mem",
+      &joint_claim_eval_mem,
+    );
+
     let (proof_mem, _comm_mem_eval) = PolyEvalProof::prove(
       &dense.comb_mem,
       None,
@@ -924,7 +972,10 @@ impl<G: ProjectiveCurve> HashLayerProof<G> {
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
     let timer = Timer::new("verify_hash_proof");
-    transcript.append_protocol_name(HashLayerProof::protocol_name());
+    <Transcript as ProofTranscript<G>>::append_protocol_name(
+      transcript,
+      HashLayerProof::<G>::protocol_name(),
+    );
 
     let (rand_mem, rand_ops) = rand;
 
@@ -964,8 +1015,11 @@ impl<G: ProjectiveCurve> HashLayerProof<G> {
     evals_ops.extend(eval_col_read_ts_vec);
     evals_ops.extend(eval_val_vec);
     evals_ops.resize(evals_ops.len().next_power_of_two(), G::ScalarField::zero());
-    evals_ops.append_to_transcript(b"claim_evals_ops", transcript);
-    let challenges_ops = transcript.challenge_vector(
+
+    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"claim_evals_ops", &evals_ops);
+
+    let challenges_ops = <Transcript as ProofTranscript<G>>::challenge_vector(
+      transcript,
       b"challenge_combine_n_to_one",
       evals_ops.len().log_2() as usize,
     );
@@ -978,7 +1032,11 @@ impl<G: ProjectiveCurve> HashLayerProof<G> {
     let joint_claim_eval_ops = poly_evals_ops[0];
     let mut r_joint_ops = challenges_ops;
     r_joint_ops.extend(rand_ops);
-    joint_claim_eval_ops.append_to_transcript(b"joint_claim_eval_ops", transcript);
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"joint_claim_eval_ops",
+      &joint_claim_eval_ops,
+    );
     self.proof_ops.verify_plain(
       &gens.gens_ops,
       transcript,
@@ -990,8 +1048,9 @@ impl<G: ProjectiveCurve> HashLayerProof<G> {
     // verify proof-mem using comm_comb_mem at rand_mem
     // form a single decommitment using comb_comb_mem at rand_mem
     let evals_mem: Vec<G::ScalarField> = vec![*eval_row_audit_ts, *eval_col_audit_ts];
-    evals_mem.append_to_transcript(b"claim_evals_mem", transcript);
-    let challenges_mem = transcript.challenge_vector(
+    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"claim_evals_mem", &evals_mem);
+    let challenges_mem = <Transcript as ProofTranscript<G>>::challenge_vector(
+      transcript,
       b"challenge_combine_two_to_one",
       evals_mem.len().log_2() as usize,
     );
@@ -1004,7 +1063,11 @@ impl<G: ProjectiveCurve> HashLayerProof<G> {
     let joint_claim_eval_mem = poly_evals_mem[0];
     let mut r_joint_mem = challenges_mem;
     r_joint_mem.extend(rand_mem);
-    joint_claim_eval_mem.append_to_transcript(b"joint_claim_eval_mem", transcript);
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"joint_claim_eval_mem",
+      &joint_claim_eval_mem,
+    );
     self.proof_mem.verify_plain(
       &gens.gens_mem,
       transcript,
@@ -1015,7 +1078,7 @@ impl<G: ProjectiveCurve> HashLayerProof<G> {
 
     // verify the claims from the product layer
     let (eval_ops_addr, eval_read_ts, eval_audit_ts) = &self.eval_row;
-    HashLayerProof::verify_helper(
+    HashLayerProof::<G>::verify_helper(
       &(rand_mem, rand_ops),
       claims_row,
       eval_row_ops_val,
@@ -1028,7 +1091,7 @@ impl<G: ProjectiveCurve> HashLayerProof<G> {
     )?;
 
     let (eval_ops_addr, eval_read_ts, eval_audit_ts) = &self.eval_col;
-    HashLayerProof::verify_helper(
+    HashLayerProof::<G>::verify_helper(
       &(rand_mem, rand_ops),
       claims_col,
       eval_col_ops_val,
@@ -1348,7 +1411,7 @@ impl<G: ProjectiveCurve> PolyEvalNetworkProof<G> {
     evals: &[G::ScalarField],
     gens: &SparseMatPolyCommitmentGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G::ScalarField>,
+    random_tape: &mut RandomTape<G>,
   ) -> Self {
     transcript.append_protocol_name(PolyEvalNetworkProof::protocol_name());
 
@@ -1480,16 +1543,19 @@ impl<G: ProjectiveCurve> SparseMatPolyEvalProof<G> {
     evals: &[G::ScalarField], // a vector evaluation of \widetilde{M}(r = (rx,ry)) for each M
     gens: &SparseMatPolyCommitmentGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G::ScalarField>,
+    random_tape: &mut RandomTape<G>,
   ) -> SparseMatPolyEvalProof<G> {
-    transcript.append_protocol_name(SparseMatPolyEvalProof::protocol_name());
+    <Transcript as ProofTranscript<G>>::append_protocol_name(
+      transcript,
+      SparseMatPolyEvalProof::<G>::protocol_name(),
+    );
 
     // ensure there is one eval for each polynomial in dense
     assert_eq!(evals.len(), dense.batch_size);
 
     let (mem_rx, mem_ry) = {
       // equalize the lengths of rx and ry
-      let (rx_ext, ry_ext) = SparseMatPolyEvalProof::equalize(rx, ry);
+      let (rx_ext, ry_ext) = SparseMatPolyEvalProof::<G>::equalize(rx, ry);
       let poly_rx = EqPolynomial::new(rx_ext).evals();
       let poly_ry = EqPolynomial::new(ry_ext).evals();
       (poly_rx, poly_ry)
@@ -1631,16 +1697,16 @@ impl<F: PrimeField> SparsePolynomial<F> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use ark_bls12_381::Fr;
+  use ark_bls12_381::G1Projective;
   use ark_std::rand::RngCore;
   use ark_std::test_rng;
   use ark_std::UniformRand;
 
   #[test]
   fn check_sparse_polyeval_proof() {
-    check_sparse_polyeval_proof_helper::<Fr>
+    check_sparse_polyeval_proof_helper::<G1Projective>()
   }
-  fn check_sparse_polyeval_proof_helper<F: PrimeField>() {
+  fn check_sparse_polyeval_proof_helper<G: ProjectiveCurve>() {
     let mut prng = test_rng();
 
     let num_nz_entries: usize = 256;
@@ -1649,18 +1715,18 @@ mod tests {
     let num_vars_x: usize = num_rows.log_2() as usize;
     let num_vars_y: usize = num_cols.log_2() as usize;
 
-    let mut M: Vec<SparseMatEntry> = Vec::new();
+    let mut M: Vec<SparseMatEntry<G::ScalarField>> = Vec::new();
 
     for _i in 0..num_nz_entries {
       M.push(SparseMatEntry::new(
         (prng.next_u64() % (num_rows as u64)) as usize,
         (prng.next_u64() % (num_cols as u64)) as usize,
-        F::rand(&mut prng),
+        G::ScalarField::rand(&mut prng),
       ));
     }
 
     let poly_M = SparseMatPolynomial::new(num_vars_x, num_vars_y, M);
-    let gens = SparseMatPolyCommitmentGens::new(
+    let gens = SparseMatPolyCommitmentGens::<G>::new(
       b"gens_sparse_poly",
       num_vars_x,
       num_vars_y,
@@ -1672,12 +1738,12 @@ mod tests {
     let (poly_comm, dense) = SparseMatPolynomial::multi_commit(&[&poly_M, &poly_M, &poly_M], &gens);
 
     // evaluation
-    let rx: Vec<F> = (0..num_vars_x)
-      .map(|_i| F::rand(&mut prng))
-      .collect::<Vec<F>>();
-    let ry: Vec<F> = (0..num_vars_y)
-      .map(|_i| F::rand(&mut prng))
-      .collect::<Vec<F>>();
+    let rx: Vec<G::ScalarField> = (0..num_vars_x)
+      .map(|_i| G::ScalarField::rand(&mut prng))
+      .collect::<Vec<G::ScalarField>>();
+    let ry: Vec<G::ScalarField> = (0..num_vars_y)
+      .map(|_i| G::ScalarField::rand(&mut prng))
+      .collect::<Vec<G::ScalarField>>();
     let eval = SparseMatPolynomial::multi_evaluate(&[&poly_M], &rx, &ry);
     let evals = vec![eval[0], eval[0], eval[0]];
 

@@ -86,7 +86,7 @@ impl<G: ProjectiveCurve> EqualityProof<G> {
   pub fn prove(
     gens_n: &MultiCommitGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G::ScalarField>,
+    random_tape: &mut RandomTape<G>,
     v1: &G::ScalarField,
     s1: &G::ScalarField,
     v2: &G::ScalarField,
@@ -157,7 +157,7 @@ impl<G: ProjectiveCurve> ProductProof<G> {
   pub fn prove(
     gens_n: &MultiCommitGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G::ScalarField>,
+    random_tape: &mut RandomTape<G>,
     x: &G::ScalarField,
     rX: &G::ScalarField,
     y: &G::ScalarField,
@@ -305,7 +305,7 @@ impl<G: ProjectiveCurve> DotProductProof<G> {
     gens_1: &MultiCommitGens<G>,
     gens_n: &MultiCommitGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G::ScalarField>,
+    random_tape: &mut RandomTape<G>,
     x_vec: &[G::ScalarField],
     blind_x: &G::ScalarField,
     a_vec: &[G::ScalarField],
@@ -431,7 +431,7 @@ impl<G: ProjectiveCurve> DotProductProofLog<G> {
   pub fn prove(
     gens: &DotProductProofGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G::ScalarField>,
+    random_tape: &mut RandomTape<G>,
     x_vec: &[G::ScalarField],
     blind_x: &G::ScalarField,
     a_vec: &[G::ScalarField],

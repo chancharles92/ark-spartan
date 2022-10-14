@@ -1,7 +1,7 @@
 use super::commitments::{Commitments, MultiCommitGens};
 use super::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::ProjectiveCurve;
-use ark_ff::{Field, PrimeField};
+use ark_ff::PrimeField;
 use ark_serialize::*;
 use merlin::Transcript;
 
@@ -92,7 +92,7 @@ impl<F: PrimeField> UniPoly<F> {
     gens: &MultiCommitGens<G>,
     blind: &F,
   ) -> G {
-    self.coeffs.commit(blind, gens)
+    Commitments::batch_commit(&self.coeffs, blind, gens)
   }
 }
 
@@ -113,11 +113,11 @@ impl<F: PrimeField> CompressedUniPoly<F> {
   }
 }
 
-impl<G:ProjectiveCurve> AppendToTranscript<G> for UniPoly<G::ScalarField> {
+impl<G: ProjectiveCurve> AppendToTranscript<G> for UniPoly<G::ScalarField> {
   fn append_to_transcript(&self, label: &'static [u8], transcript: &mut Transcript) {
     transcript.append_message(label, b"UniPoly_begin");
     for i in 0..self.coeffs.len() {
-      transcript.append_scalar(b"coeff", &self.coeffs[i]);
+      <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"coeff", &self.coeffs[i]);
     }
     transcript.append_message(label, b"UniPoly_end");
   }
@@ -128,7 +128,6 @@ mod tests {
 
   use super::*;
   use ark_bls12_381::Fr;
-  use ark_std::One;
 
   #[test]
   fn test_from_evals_quad() {

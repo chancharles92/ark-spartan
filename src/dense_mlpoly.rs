@@ -9,14 +9,14 @@ use ark_ec::msm::VariableBaseMSM;
 use ark_ec::ProjectiveCurve;
 use ark_ff::PrimeField;
 use ark_serialize::*;
-use ark_std::{One, Zero};
+use ark_std::Zero;
 use core::ops::Index;
 use merlin::Transcript;
 
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DensePolynomial<F> {
   num_vars: usize, // the number of variables in the multilinear polynomial
   len: usize,
@@ -27,10 +27,10 @@ pub struct PolyCommitmentGens<G> {
   pub gens: DotProductProofGens<G>,
 }
 
-impl<G> PolyCommitmentGens<G> {
+impl<G: ProjectiveCurve> PolyCommitmentGens<G> {
   // the number of variables in the multilinear polynomial
   pub fn new(num_vars: usize, label: &'static [u8]) -> Self {
-    let (_left, right) = EqPolynomial::compute_factored_lens(num_vars);
+    let (_left, right) = EqPolynomial::<G::ScalarField>::compute_factored_lens(num_vars);
     let gens = DotProductProofGens::new(right.pow2(), label);
     PolyCommitmentGens { gens }
   }
@@ -41,12 +41,12 @@ pub struct PolyCommitmentBlinds<F> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct PolyCommitment<G:ProjectiveCurve> {
+pub struct PolyCommitment<G: ProjectiveCurve> {
   C: Vec<G>,
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct ConstPolyCommitment<G:ProjectiveCurve> {
+pub struct ConstPolyCommitment<G: ProjectiveCurve> {
   C: G,
 }
 
@@ -90,7 +90,7 @@ impl<F: PrimeField> EqPolynomial<F> {
 
   pub fn compute_factored_evals(&self) -> (Vec<F>, Vec<F>) {
     let ell = self.r.len();
-    let (left_num_vars, _right_num_vars) = EqPolynomial::compute_factored_lens(ell);
+    let (left_num_vars, _right_num_vars) = Self::compute_factored_lens(ell);
 
     let L = EqPolynomial::new(self.r[..left_num_vars].to_vec()).evals();
     let R = EqPolynomial::new(self.r[left_num_vars..ell].to_vec()).evals();
@@ -163,12 +163,22 @@ impl<F: PrimeField> DensePolynomial<F> {
   }
 
   #[cfg(not(feature = "multicore"))]
-  fn commit_inner<G:ProjectiveCurve<ScalarField = F>>(&self, blinds: &[F], gens: &MultiCommitGens<G>) -> PolyCommitment<G> {
+  fn commit_inner<G: ProjectiveCurve<ScalarField = F>>(
+    &self,
+    blinds: &[F],
+    gens: &MultiCommitGens<G>,
+  ) -> PolyCommitment<G> {
     let L_size = blinds.len();
     let R_size = self.Z.len() / L_size;
     assert_eq!(L_size * R_size, self.Z.len());
     let C = (0..L_size)
-      .map(|i| self.Z[R_size * i..R_size * (i + 1)].commit(&blinds[i], gens))
+      .map(|i| {
+        Commitments::batch_commit(
+          self.Z[R_size * i..R_size * (i + 1)].as_ref(),
+          &blinds[i],
+          gens,
+        )
+      })
       .collect();
     PolyCommitment { C }
   }
@@ -176,7 +186,7 @@ impl<F: PrimeField> DensePolynomial<F> {
   pub fn commit<G>(
     &self,
     gens: &PolyCommitmentGens<G>,
-    random_tape: Option<&mut RandomTape<F>>,
+    random_tape: Option<&mut RandomTape<G>>,
   ) -> (PolyCommitment<G>, PolyCommitmentBlinds<F>)
   where
     G: ProjectiveCurve<ScalarField = F>,
@@ -185,7 +195,7 @@ impl<F: PrimeField> DensePolynomial<F> {
     let ell = self.get_num_vars();
     assert_eq!(n, ell.pow2());
 
-    let (left_num_vars, right_num_vars) = EqPolynomial::compute_factored_lens(ell);
+    let (left_num_vars, right_num_vars) = EqPolynomial::<F>::compute_factored_lens(ell);
     let L_size = left_num_vars.pow2();
     let R_size = right_num_vars.pow2();
     assert_eq!(L_size * R_size, n);
@@ -204,7 +214,8 @@ impl<F: PrimeField> DensePolynomial<F> {
   }
 
   pub fn bound(&self, L: &[F]) -> Vec<F> {
-    let (left_num_vars, right_num_vars) = EqPolynomial::compute_factored_lens(self.get_num_vars());
+    let (left_num_vars, right_num_vars) =
+      EqPolynomial::<F>::compute_factored_lens(self.get_num_vars());
     let L_size = left_num_vars.pow2();
     let R_size = right_num_vars.pow2();
     (0..R_size)
@@ -231,12 +242,15 @@ impl<F: PrimeField> DensePolynomial<F> {
   }
 
   // returns Z(r) in O(n) time
-  pub fn evaluate(&self, r: &[F]) -> F {
+  pub fn evaluate<G>(&self, r: &[F]) -> F
+  where
+    G: ProjectiveCurve<ScalarField = F>,
+  {
     // r must have a value for each variable
     assert_eq!(r.len(), self.get_num_vars());
     let chis = EqPolynomial::new(r.to_vec()).evals();
     assert_eq!(chis.len(), self.Z.len());
-    DotProductProofLog::compute_dotproduct(&self.Z, &chis)
+    DotProductProofLog::<G>::compute_dotproduct(&self.Z, &chis)
   }
 
   fn vec(&self) -> &Vec<F> {
@@ -284,7 +298,7 @@ impl<F> Index<usize> for DensePolynomial<F> {
   }
 }
 
-impl<G:ProjectiveCurve> AppendToTranscript<G> for PolyCommitment<G> {
+impl<G: ProjectiveCurve> AppendToTranscript<G> for PolyCommitment<G> {
   fn append_to_transcript(&self, label: &'static [u8], transcript: &mut Transcript) {
     transcript.append_message(label, b"poly_commitment_begin");
     for i in 0..self.C.len() {
@@ -312,14 +326,18 @@ impl<G: ProjectiveCurve> PolyEvalProof<G> {
     blind_Zr_opt: Option<&G::ScalarField>, // specifies a blind for Zr
     gens: &PolyCommitmentGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G::ScalarField>,
+    random_tape: &mut RandomTape<G>,
   ) -> (PolyEvalProof<G>, G) {
-    transcript.append_protocol_name(PolyEvalProof::protocol_name());
+    <Transcript as ProofTranscript<G>>::append_protocol_name(
+      transcript,
+      PolyEvalProof::<G>::protocol_name(),
+    );
 
     // assert vectors are of the right size
     assert_eq!(poly.get_num_vars(), r.len());
 
-    let (left_num_vars, right_num_vars) = EqPolynomial::compute_factored_lens(r.len());
+    let (left_num_vars, right_num_vars) =
+      EqPolynomial::<G::ScalarField>::compute_factored_lens(r.len());
     let L_size = left_num_vars.pow2();
     let R_size = right_num_vars.pow2();
 
@@ -367,7 +385,10 @@ impl<G: ProjectiveCurve> PolyEvalProof<G> {
     C_Zr: &G,             // commitment to \widetilde{Z}(r)
     comm: &PolyCommitment<G>,
   ) -> Result<(), ProofVerifyError> {
-    transcript.append_protocol_name(PolyEvalProof::protocol_name());
+    <Transcript as ProofTranscript<G>>::append_protocol_name(
+      transcript,
+      PolyEvalProof::<G>::protocol_name(),
+    );
 
     // compute L and R
     let eq = EqPolynomial::new(r.to_vec());
@@ -403,11 +424,16 @@ impl<G: ProjectiveCurve> PolyEvalProof<G> {
 mod tests {
   use super::*;
   use ark_bls12_381::Fr;
+  use ark_bls12_381::G1Projective;
   use ark_std::test_rng;
+  use ark_std::One;
   use ark_std::UniformRand;
 
-  fn evaluate_with_LR<F>(Z: &[F], r: &[F]) -> F {
-    let eq = EqPolynomial::new(r.to_vec());
+  fn evaluate_with_LR<G: ProjectiveCurve>(
+    Z: &[G::ScalarField],
+    r: &[G::ScalarField],
+  ) -> G::ScalarField {
+    let eq = EqPolynomial::<G::ScalarField>::new(r.to_vec());
     let (L, R) = eq.compute_factored_evals();
 
     let ell = r.len();
@@ -421,29 +447,34 @@ mod tests {
     // compute vector-matrix product between L and Z viewed as a matrix
     let LZ = (0..m)
       .map(|i| (0..m).map(|j| L[j] * Z[j * m + i]).sum())
-      .collect::<Vec<F>>();
+      .collect::<Vec<G::ScalarField>>();
 
     // compute dot product between LZ and R
-    DotProductProofLog::compute_dotproduct(&LZ, &R)
+    DotProductProofLog::<G>::compute_dotproduct(&LZ, &R)
   }
 
   #[test]
   fn check_polynomial_evaluation() {
-    check_polynomial_evaluation_helper::<Fr>
+    check_polynomial_evaluation_helper::<G1Projective>()
   }
 
-  fn check_polynomial_evaluation_helper<F>() {
+  fn check_polynomial_evaluation_helper<G: ProjectiveCurve>() {
     // Z = [1, 2, 1, 4]
-    let Z = vec![F::one(), F::from(2u64), F::one(), F::from(4u64)];
+    let Z = vec![
+      G::ScalarField::one(),
+      G::ScalarField::from(2u64),
+      G::ScalarField::one(),
+      G::ScalarField::from(4u64),
+    ];
 
     // r = [4,3]
-    let r = vec![F::from(4u64), F::from(3u64)];
+    let r = vec![G::ScalarField::from(4u64), G::ScalarField::from(3u64)];
 
-    let eval_with_LR = evaluate_with_LR(&Z, &r);
+    let eval_with_LR = evaluate_with_LR::<G>(&Z, &r);
     let poly = DensePolynomial::new(Z);
 
-    let eval = poly.evaluate(&r);
-    assert_eq!(eval, F::from(28u64));
+    let eval = poly.evaluate::<G>(&r);
+    assert_eq!(eval, G::ScalarField::from(28u64));
     assert_eq!(eval_with_LR, eval);
   }
 
@@ -517,20 +548,19 @@ mod tests {
 
   #[test]
   fn check_memoized_chis() {
-    check_memoized_chis_helper::<Fr>
+    check_memoized_chis_helper::<G1Projective>()
   }
 
-  #[test]
-  fn check_memoized_chis_helper<F: PrimeField>() {
+  fn check_memoized_chis_helper<G: ProjectiveCurve>() {
     let mut prng = test_rng();
 
     let s = 10;
-    let mut r: Vec<F> = Vec::new();
+    let mut r: Vec<G::ScalarField> = Vec::new();
     for _i in 0..s {
-      r.push(F::rand(&mut prng));
+      r.push(G::ScalarField::rand(&mut prng));
     }
-    let chis = tests::compute_chis_at_r(&r);
-    let chis_m = EqPolynomial::new(r).evals();
+    let chis = tests::compute_chis_at_r::<G::ScalarField>(&r);
+    let chis_m = EqPolynomial::<G::ScalarField>::new(r).evals();
     assert_eq!(chis, chis_m);
   }
 
@@ -575,19 +605,24 @@ mod tests {
 
   #[test]
   fn check_polynomial_commit() {
-    check_polynomial_commit_helper::<Fr>
+    check_polynomial_commit_helper::<G1Projective>()
   }
 
-  fn check_polynomial_commit_helper<F: PrimeField>() {
-    let Z = vec![F::one(), F::from(2u64), F::one(), F::from(4u64)];
+  fn check_polynomial_commit_helper<G: ProjectiveCurve>() {
+    let Z = vec![
+      G::ScalarField::one(),
+      G::ScalarField::from(2u64),
+      G::ScalarField::one(),
+      G::ScalarField::from(4u64),
+    ];
     let poly = DensePolynomial::new(Z);
 
     // r = [4,3]
-    let r = vec![F::from(4u64), F::from(3u64)];
-    let eval = poly.evaluate(&r);
-    assert_eq!(eval, F::from(28u64));
+    let r = vec![G::ScalarField::from(4u64), G::ScalarField::from(3u64)];
+    let eval = poly.evaluate::<G>(&r);
+    assert_eq!(eval, G::ScalarField::from(28u64));
 
-    let gens = PolyCommitmentGens::new(poly.get_num_vars(), b"test-two");
+    let gens = PolyCommitmentGens::<G>::new(poly.get_num_vars(), b"test-two");
     let (poly_commitment, blinds) = poly.commit(&gens, None);
 
     let mut random_tape = RandomTape::new(b"proof");

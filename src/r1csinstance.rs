@@ -10,15 +10,13 @@ use super::sparse_mlpoly::{
 };
 use super::timer::Timer;
 use ark_ec::ProjectiveCurve;
-use ark_ff::{Field, PrimeField};
+use ark_ff::PrimeField;
 use ark_serialize::*;
 use ark_std::test_rng;
-use ark_std::UniformRand;
-use ark_std::{One, Zero};
 use merlin::Transcript;
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSInstance<F:PrimeField> {
+pub struct R1CSInstance<F: PrimeField> {
   num_cons: usize,
   num_vars: usize,
   num_inputs: usize,
@@ -27,7 +25,7 @@ pub struct R1CSInstance<F:PrimeField> {
   C: SparseMatPolynomial<F>,
 }
 
-impl<G:ProjectiveCurve> AppendToTranscript<G> for R1CSInstance<G::ScalarField> {
+impl<G: ProjectiveCurve> AppendToTranscript<G> for R1CSInstance<G::ScalarField> {
   fn append_to_transcript(&self, _label: &'static [u8], transcript: &mut Transcript) {
     let mut data = vec![];
     self.serialize(&mut data).unwrap();
@@ -40,7 +38,7 @@ pub struct R1CSCommitmentGens<G> {
   gens: SparseMatPolyCommitmentGens<G>,
 }
 
-impl<G> R1CSCommitmentGens<G> {
+impl<G: ProjectiveCurve> R1CSCommitmentGens<G> {
   pub fn new(
     label: &'static [u8],
     num_cons: usize,
@@ -58,14 +56,14 @@ impl<G> R1CSCommitmentGens<G> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSCommitment<G:ProjectiveCurve> {
+pub struct R1CSCommitment<G: ProjectiveCurve> {
   num_cons: usize,
   num_vars: usize,
   num_inputs: usize,
   comm: SparseMatPolyCommitment<G>,
 }
 
-impl<G:ProjectiveCurve> AppendToTranscript<G> for R1CSCommitment<G> {
+impl<G: ProjectiveCurve> AppendToTranscript<G> for R1CSCommitment<G> {
   fn append_to_transcript(&self, _label: &'static [u8], transcript: &mut Transcript) {
     transcript.append_u64(b"num_cons", self.num_cons as u64);
     transcript.append_u64(b"num_vars", self.num_vars as u64);
@@ -78,7 +76,7 @@ pub struct R1CSDecommitment<F> {
   dense: MultiSparseMatPolynomialAsDense<F>,
 }
 
-impl<G:ProjectiveCurve> R1CSCommitment<G> {
+impl<G: ProjectiveCurve> R1CSCommitment<G> {
   pub fn get_num_cons(&self) -> usize {
     self.num_cons
   }
@@ -92,7 +90,7 @@ impl<G:ProjectiveCurve> R1CSCommitment<G> {
   }
 }
 
-impl<F:PrimeField> R1CSInstance<F> {
+impl<F: PrimeField> R1CSInstance<F> {
   pub fn new(
     num_cons: usize,
     num_vars: usize,
@@ -123,13 +121,13 @@ impl<F:PrimeField> R1CSInstance<F> {
 
     let mat_A = (0..A.len())
       .map(|i| SparseMatEntry::new(A[i].0, A[i].1, A[i].2))
-      .collect::<Vec<SparseMatEntry>>();
+      .collect::<Vec<SparseMatEntry<F>>>();
     let mat_B = (0..B.len())
       .map(|i| SparseMatEntry::new(B[i].0, B[i].1, B[i].2))
-      .collect::<Vec<SparseMatEntry>>();
+      .collect::<Vec<SparseMatEntry<F>>>();
     let mat_C = (0..C.len())
       .map(|i| SparseMatEntry::new(C[i].0, C[i].1, C[i].2))
-      .collect::<Vec<SparseMatEntry>>();
+      .collect::<Vec<SparseMatEntry<F>>>();
 
     let poly_A = SparseMatPolynomial::new(num_poly_vars_x, num_poly_vars_y, mat_A);
     let poly_B = SparseMatPolynomial::new(num_poly_vars_x, num_poly_vars_y, mat_B);
@@ -186,9 +184,9 @@ impl<F:PrimeField> R1CSInstance<F> {
     };
 
     // three sparse matrices
-    let mut A: Vec<SparseMatEntry> = Vec::new();
-    let mut B: Vec<SparseMatEntry> = Vec::new();
-    let mut C: Vec<SparseMatEntry> = Vec::new();
+    let mut A: Vec<SparseMatEntry<F>> = Vec::new();
+    let mut B: Vec<SparseMatEntry<F>> = Vec::new();
+    let mut C: Vec<SparseMatEntry<F>> = Vec::new();
     let one = F::one();
     for i in 0..num_cons {
       let A_idx = i % size_z;
@@ -335,7 +333,7 @@ impl<G: ProjectiveCurve> R1CSEvalProof<G> {
     evals: &(G::ScalarField, G::ScalarField, G::ScalarField),
     gens: &R1CSCommitmentGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G::ScalarField>,
+    random_tape: &mut RandomTape<G>,
   ) -> R1CSEvalProof<G> {
     let timer = Timer::new("R1CSEvalProof::prove");
     let proof = SparseMatPolyEvalProof::prove(

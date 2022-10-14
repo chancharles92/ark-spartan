@@ -14,7 +14,7 @@ use core::iter;
 use merlin::Transcript;
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct BulletReductionProof<G:ProjectiveCurve> {
+pub struct BulletReductionProof<G: ProjectiveCurve> {
   L_vec: Vec<G>,
   R_vec: Vec<G>,
 }

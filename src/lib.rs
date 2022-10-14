@@ -30,7 +30,6 @@ mod unipoly;
 use ark_ec::ProjectiveCurve;
 use ark_ff::PrimeField;
 use ark_serialize::*;
-use ark_std::Zero;
 use core::cmp::max;
 use errors::{ProofVerifyError, R1CSError};
 use merlin::Transcript;
@@ -43,7 +42,7 @@ use timer::Timer;
 use transcript::{AppendToTranscript, ProofTranscript};
 
 /// `ComputationCommitment` holds a public preprocessed NP statement (e.g., R1CS)
-pub struct ComputationCommitment<G:ProjectiveCurve> {
+pub struct ComputationCommitment<G: ProjectiveCurve> {
   comm: R1CSCommitment<G>,
 }
 
@@ -100,11 +99,11 @@ pub type VarsAssignment<F> = Assignment<F>;
 pub type InputsAssignment<F> = Assignment<F>;
 
 /// `Instance` holds the description of R1CS matrices
-pub struct Instance<F:PrimeField> {
+pub struct Instance<F: PrimeField> {
   inst: R1CSInstance<F>,
 }
 
-impl<F:PrimeField> Instance<F> {
+impl<F: PrimeField> Instance<F> {
   /// Constructs a new `Instance` and an associated satisfying assignment
   pub fn new(
     num_cons: usize,
@@ -258,7 +257,7 @@ pub struct SNARKGens<G> {
   gens_r1cs_eval: R1CSCommitmentGens<G>,
 }
 
-impl<G> SNARKGens<G> {
+impl<G: ProjectiveCurve> SNARKGens<G> {
   /// Constructs a new `SNARKGens` given the size of the R1CS statement
   /// `num_nz_entries` specifies the maximum number of non-zero entries in any of the three R1CS matrices
   pub fn new(num_cons: usize, num_vars: usize, num_inputs: usize, num_nz_entries: usize) -> Self {
@@ -270,7 +269,7 @@ impl<G> SNARKGens<G> {
       num_vars_padded
     };
 
-    let gens_r1cs_sat = R1CSGens::new(b"gens_r1cs_sat", num_cons, num_vars_padded);
+    let gens_r1cs_sat = R1CSGens::<G>::new(b"gens_r1cs_sat", num_cons, num_vars_padded);
     let gens_r1cs_eval = R1CSCommitmentGens::new(
       b"gens_r1cs_eval",
       num_cons,
@@ -329,9 +328,11 @@ impl<G: ProjectiveCurve> SNARK<G> {
 
     // we create a Transcript object seeded with a random F
     // to aid the prover produce its randomness
-    let mut random_tape = RandomTape::new(b"proof");
-
-    transcript.append_protocol_name(SNARK::protocol_name());
+    let mut random_tape = RandomTape::<G>::new(b"proof");
+    <Transcript as ProofTranscript<G>>::append_protocol_name(
+      transcript,
+      SNARK::<G>::protocol_name(),
+    );
     comm.comm.append_to_transcript(b"comm", transcript);
 
     let (r1cs_sat_proof, rx, ry) = {
@@ -370,9 +371,9 @@ impl<G: ProjectiveCurve> SNARK<G> {
     let timer_eval = Timer::new("eval_sparse_polys");
     let inst_evals = {
       let (Ar, Br, Cr) = inst.inst.evaluate(&rx, &ry);
-      Ar.append_to_transcript(b"Ar_claim", transcript);
-      Br.append_to_transcript(b"Br_claim", transcript);
-      Cr.append_to_transcript(b"Cr_claim", transcript);
+      <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", &Ar);
+      <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", &Br);
+      <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", &Cr);
       (Ar, Br, Cr)
     };
     timer_eval.stop();
@@ -412,7 +413,10 @@ impl<G: ProjectiveCurve> SNARK<G> {
     gens: &SNARKGens<G>,
   ) -> Result<(), ProofVerifyError> {
     let timer_verify = Timer::new("SNARK::verify");
-    transcript.append_protocol_name(SNARK::protocol_name());
+    <Transcript as ProofTranscript<G>>::append_protocol_name(
+      transcript,
+      SNARK::<G>::protocol_name(),
+    );
 
     // append a commitment to the computation to the transcript
     comm.comm.append_to_transcript(b"comm", transcript);
@@ -431,9 +435,9 @@ impl<G: ProjectiveCurve> SNARK<G> {
 
     let timer_eval_proof = Timer::new("verify_eval_proof");
     let (Ar, Br, Cr) = &self.inst_evals;
-    Ar.append_to_transcript(b"Ar_claim", transcript);
-    Br.append_to_transcript(b"Br_claim", transcript);
-    Cr.append_to_transcript(b"Cr_claim", transcript);
+    <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", &Ar);
+    <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", &Br);
+    <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", &Cr);
     self.r1cs_eval_proof.verify(
       &comm.comm,
       &rx,
@@ -453,7 +457,7 @@ pub struct NIZKGens<G> {
   gens_r1cs_sat: R1CSGens<G>,
 }
 
-impl<G> NIZKGens<G> {
+impl<G: ProjectiveCurve> NIZKGens<G> {
   /// Constructs a new `NIZKGens` given the size of the R1CS statement
   pub fn new(num_cons: usize, num_vars: usize, num_inputs: usize) -> Self {
     let num_vars_padded = {
@@ -464,7 +468,7 @@ impl<G> NIZKGens<G> {
       num_vars_padded
     };
 
-    let gens_r1cs_sat = R1CSGens::new(b"gens_r1cs_sat", num_cons, num_vars_padded);
+    let gens_r1cs_sat = R1CSGens::<G>::new(b"gens_r1cs_sat", num_cons, num_vars_padded);
     NIZKGens { gens_r1cs_sat }
   }
 }
@@ -494,8 +498,13 @@ impl<G: ProjectiveCurve> NIZK<G> {
     // to aid the prover produce its randomness
     let mut random_tape = RandomTape::new(b"proof");
 
-    transcript.append_protocol_name(NIZK::protocol_name());
-    inst.inst.append_to_transcript(b"inst", transcript);
+    <Transcript as ProofTranscript<G>>::append_protocol_name(
+      transcript,
+      NIZK::<G>::protocol_name(),
+    );
+    <R1CSInstance<G::ScalarField> as AppendToTranscript<G>>::append_to_transcript(
+      &inst.inst, b"inst", transcript,
+    );
 
     let (r1cs_sat_proof, rx, ry) = {
       // we might need to pad variables
@@ -542,8 +551,13 @@ impl<G: ProjectiveCurve> NIZK<G> {
   ) -> Result<(), ProofVerifyError> {
     let timer_verify = Timer::new("NIZK::verify");
 
-    transcript.append_protocol_name(NIZK::protocol_name());
-    inst.inst.append_to_transcript(b"inst", transcript);
+    <Transcript as ProofTranscript<G>>::append_protocol_name(
+      transcript,
+      NIZK::<G>::protocol_name(),
+    );
+    <R1CSInstance<G::ScalarField> as AppendToTranscript<G>>::append_to_transcript(
+      &inst.inst, b"inst", transcript,
+    );
 
     // We send evaluations of A, B, C at r = (rx, ry) as claims
     // to enable the verifier complete the first sum-check
@@ -576,17 +590,21 @@ impl<G: ProjectiveCurve> NIZK<G> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use ark_bls12_381::Fr;
+  use ark_bls12_381::{Fr, G1Projective};
   use ark_std::One;
+  use ark_std::Zero;
 
   #[test]
   pub fn check_snark() {
+    check_snark_helper::<G1Projective>()
+  }
+  pub fn check_snark_helper<G: ProjectiveCurve>() {
     let num_vars = 256;
     let num_cons = num_vars;
     let num_inputs = 10;
 
     // produce public generators
-    let gens = SNARKGens::new(num_cons, num_vars, num_inputs, num_cons);
+    let gens = SNARKGens::<G>::new(num_cons, num_vars, num_inputs, num_cons);
 
     // produce a synthetic R1CSInstance
     let (inst, vars, inputs) = Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
@@ -658,10 +676,10 @@ mod tests {
 
   #[test]
   fn test_padded_constraints() {
-    test_padded_constraints_helper::<Fr>()
+    test_padded_constraints_helper::<G1Projective>()
   }
 
-  fn test_padded_constraints_helper<F: PrimeField>() {
+  fn test_padded_constraints_helper<G: ProjectiveCurve>() {
     // parameters of the R1CS instance
     let num_cons = 1;
     let num_vars = 0;
@@ -670,28 +688,28 @@ mod tests {
 
     // We will encode the above constraints into three matrices, where
     // the coefficients in the matrix are in the little-endian byte order
-    let mut A: Vec<(usize, usize, F)> = Vec::new();
-    let mut B: Vec<(usize, usize, F)> = Vec::new();
-    let mut C: Vec<(usize, usize, F)> = Vec::new();
+    let mut A: Vec<(usize, usize, G::ScalarField)> = Vec::new();
+    let mut B: Vec<(usize, usize, G::ScalarField)> = Vec::new();
+    let mut C: Vec<(usize, usize, G::ScalarField)> = Vec::new();
 
-    let zero = F::zero();
-    let one = F::one();
+    let zero = G::ScalarField::zero();
+    let one = G::ScalarField::one();
 
     // Create a^2 + b + 13
     A.push((0, num_vars + 2, one)); // 1*a
     B.push((0, num_vars + 2, one)); // 1*a
     C.push((0, num_vars + 1, one)); // 1*z
-    C.push((0, num_vars, -F::from(13u64))); // -13*1
-    C.push((0, num_vars + 3, -F::one())); // -1*b
+    C.push((0, num_vars, -G::ScalarField::from(13u64))); // -13*1
+    C.push((0, num_vars + 3, -G::ScalarField::one())); // -1*b
 
     // Var Assignments (Z_0 = 16 is the only output)
     let vars = vec![zero; num_vars];
 
     // create an InputsAssignment (a = 1, b = 2)
     let mut inputs = vec![zero; num_inputs];
-    inputs[0] = F::from(16u64);
-    inputs[1] = F::from(1u64);
-    inputs[2] = F::from(2u64);
+    inputs[0] = G::ScalarField::from(16u64);
+    inputs[1] = G::ScalarField::from(1u64);
+    inputs[2] = G::ScalarField::from(2u64);
 
     let assignment_inputs = InputsAssignment::new(&inputs).unwrap();
     let assignment_vars = VarsAssignment::new(&vars).unwrap();
@@ -702,7 +720,7 @@ mod tests {
     assert!(res.unwrap(), "should be satisfied");
 
     // SNARK public params
-    let gens = SNARKGens::new(num_cons, num_vars, num_inputs, num_non_zero_entries);
+    let gens = SNARKGens::<G>::new(num_cons, num_vars, num_inputs, num_non_zero_entries);
 
     // create a commitment to the R1CS instance
     let (comm, decomm) = SNARK::encode(&inst, &gens);
@@ -726,7 +744,7 @@ mod tests {
       .is_ok());
 
     // NIZK public params
-    let gens = NIZKGens::new(num_cons, num_vars, num_inputs);
+    let gens = NIZKGens::<G>::new(num_cons, num_vars, num_inputs);
 
     // produce a NIZK
     let mut prover_transcript = Transcript::new(b"nizk_example");

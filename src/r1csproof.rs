@@ -39,7 +39,7 @@ pub struct R1CSSumcheckGens<G> {
 }
 
 // TODO: fix passing gens_1_ref
-impl<G> R1CSSumcheckGens<G> {
+impl<G: ProjectiveCurve> R1CSSumcheckGens<G> {
   pub fn new(label: &'static [u8], gens_1_ref: &MultiCommitGens<G>) -> Self {
     let gens_1 = gens_1_ref.clone();
     let gens_3 = MultiCommitGens::new(3, label);
@@ -58,7 +58,7 @@ pub struct R1CSGens<G> {
   gens_pc: PolyCommitmentGens<G>,
 }
 
-impl<G> R1CSGens<G> {
+impl<G: ProjectiveCurve> R1CSGens<G> {
   pub fn new(label: &'static [u8], _num_cons: usize, num_vars: usize) -> Self {
     let num_poly_vars = num_vars.log_2() as usize;
     let gens_pc = PolyCommitmentGens::new(num_poly_vars, label);
@@ -76,7 +76,7 @@ impl<G: ProjectiveCurve> R1CSProof<G> {
     evals_Cz: &mut DensePolynomial<G::ScalarField>,
     gens: &R1CSSumcheckGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G::ScalarField>,
+    random_tape: &mut RandomTape<G>,
   ) -> (
     ZKSumcheckInstanceProof<G>,
     Vec<G::ScalarField>,
@@ -117,7 +117,7 @@ impl<G: ProjectiveCurve> R1CSProof<G> {
     evals_ABC: &mut DensePolynomial<G::ScalarField>,
     gens: &R1CSSumcheckGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G::ScalarField>,
+    random_tape: &mut RandomTape<G>,
   ) -> (
     ZKSumcheckInstanceProof<G>,
     Vec<G::ScalarField>,
@@ -153,20 +153,21 @@ impl<G: ProjectiveCurve> R1CSProof<G> {
     input: &[G::ScalarField],
     gens: &R1CSGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G::ScalarField>,
+    random_tape: &mut RandomTape<G>,
   ) -> (R1CSProof<G>, Vec<G::ScalarField>, Vec<G::ScalarField>) {
     let timer_prove = Timer::new("R1CSProof::prove");
-    transcript.append_protocol_name(R1CSProof::protocol_name());
+    <Transcript as ProofTranscript<G>>::append_protocol_name(
+      transcript,
+      R1CSProof::<G>::protocol_name(),
+    );
 
     // we currently require the number of |inputs| + 1 to be at most number of vars
     assert!(input.len() < vars.len());
-
-    input.append_to_transcript(b"input", transcript);
-
+    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"input", input);
     let timer_commit = Timer::new("polycommit");
     let (poly_vars, comm_vars, blinds_vars) = {
       // create a multilinear polynomial using the supplied assignment for variables
-      let poly_vars = DensePolynomial::new(vars.clone());
+      let poly_vars = DensePolynomial::<G::ScalarField>::new(vars.clone());
 
       // produce a commitment to the satisfying assignment
       let (comm_vars, blinds_vars) = poly_vars.commit(&gens.gens_pc, Some(random_tape));
@@ -195,7 +196,12 @@ impl<G: ProjectiveCurve> R1CSProof<G> {
       inst.get_num_cons().log_2() as usize,
       z.len().log_2() as usize,
     );
-    let tau = transcript.challenge_vector(b"challenge_tau", num_rounds_x);
+    let tau = <Transcript as ProofTranscript<G>>::challenge_vector(
+      transcript,
+      b"challenge_tau",
+      num_rounds_x,
+    );
+
     // compute the initial evaluation table for R(\tau, x)
     let mut poly_tau = DensePolynomial::new(EqPolynomial::new(tau).evals());
     let (mut poly_Az, mut poly_Bz, mut poly_Cz) =
@@ -251,10 +257,14 @@ impl<G: ProjectiveCurve> R1CSProof<G> {
       )
     };
 
-    comm_Az_claim.append_to_transcript(b"comm_Az_claim", transcript);
-    comm_Bz_claim.append_to_transcript(b"comm_Bz_claim", transcript);
-    comm_Cz_claim.append_to_transcript(b"comm_Cz_claim", transcript);
-    comm_prod_Az_Bz_claims.append_to_transcript(b"comm_prod_Az_Bz_claims", transcript);
+    <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_Az_claim", &comm_Az_claim);
+    <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_Bz_claim", &comm_Bz_claim);
+    <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_Cz_claim", &comm_Cz_claim);
+    <Transcript as ProofTranscript<G>>::append_point(
+      transcript,
+      b"comm_prod_Az_Bz_claims",
+      &comm_prod_Az_Bz_claims,
+    );
 
     // prove the final step of sum-check #1
     let taus_bound_rx = tau_claim;
@@ -272,9 +282,9 @@ impl<G: ProjectiveCurve> R1CSProof<G> {
 
     let timer_sc_proof_phase2 = Timer::new("prove_sc_phase_two");
     // combine the three claims into a single claim
-    let r_A = transcript.challenge_scalar(b"challenege_Az");
-    let r_B = transcript.challenge_scalar(b"challenege_Bz");
-    let r_C = transcript.challenge_scalar(b"challenege_Cz");
+    let r_A = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenege_Az");
+    let r_B = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenege_Bz");
+    let r_C = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenege_Cz");
     let claim_phase2 = r_A * Az_claim + r_B * Bz_claim + r_C * Cz_claim;
     let blind_claim_phase2 = r_A * Az_blind + r_B * Bz_blind + r_C * Cz_blind;
 
@@ -305,7 +315,7 @@ impl<G: ProjectiveCurve> R1CSProof<G> {
     timer_sc_proof_phase2.stop();
 
     let timer_polyeval = Timer::new("polyeval");
-    let eval_vars_at_ry = poly_vars.evaluate(&ry[1..]);
+    let eval_vars_at_ry = poly_vars.evaluate::<G>(&ry[1..]);
     let blind_eval = random_tape.random_scalar(b"blind_eval");
     let (proof_eval_vars_at_ry, comm_vars_at_ry) = PolyEvalProof::prove(
       &poly_vars,
@@ -366,9 +376,12 @@ impl<G: ProjectiveCurve> R1CSProof<G> {
     transcript: &mut Transcript,
     gens: &R1CSGens<G>,
   ) -> Result<(Vec<G::ScalarField>, Vec<G::ScalarField>), ProofVerifyError> {
-    transcript.append_protocol_name(R1CSProof::protocol_name());
+    <Transcript as ProofTranscript<G>>::append_protocol_name(
+      transcript,
+      R1CSProof::<G>::protocol_name(),
+    );
 
-    input.append_to_transcript(b"input", transcript);
+    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"input", input);
 
     let n = num_vars;
     // add the commitment to the verifier's transcript
@@ -379,7 +392,11 @@ impl<G: ProjectiveCurve> R1CSProof<G> {
     let (num_rounds_x, num_rounds_y) = (num_cons.log_2() as usize, (2 * num_vars).log_2() as usize);
 
     // derive the verifier's challenge tau
-    let tau = transcript.challenge_vector(b"challenge_tau", num_rounds_x);
+    let tau = <Transcript as ProofTranscript<G>>::challenge_vector(
+      transcript,
+      b"challenge_tau",
+      num_rounds_x,
+    );
 
     // verify the first sum-check instance
     let claim_phase1 = G::ScalarField::zero().commit(&G::ScalarField::zero(), &gens.gens_sc.gens_1);
@@ -405,10 +422,14 @@ impl<G: ProjectiveCurve> R1CSProof<G> {
       comm_prod_Az_Bz_claims,
     )?;
 
-    comm_Az_claim.append_to_transcript(b"comm_Az_claim", transcript);
-    comm_Bz_claim.append_to_transcript(b"comm_Bz_claim", transcript);
-    comm_Cz_claim.append_to_transcript(b"comm_Cz_claim", transcript);
-    comm_prod_Az_Bz_claims.append_to_transcript(b"comm_prod_Az_Bz_claims", transcript);
+    <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_Az_claim", &comm_Az_claim);
+    <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_Bz_claim", &comm_Bz_claim);
+    <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_Cz_claim", &comm_Cz_claim);
+    <Transcript as ProofTranscript<G>>::append_point(
+      transcript,
+      b"comm_prod_Az_Bz_claims",
+      &comm_prod_Az_Bz_claims,
+    );
 
     let taus_bound_rx: G::ScalarField = (0..rx.len())
       .map(|i| rx[i] * tau[i] + (G::ScalarField::one() - rx[i]) * (G::ScalarField::one() - tau[i]))
@@ -425,9 +446,9 @@ impl<G: ProjectiveCurve> R1CSProof<G> {
     )?;
 
     // derive three public challenges and then derive a joint claim
-    let r_A = transcript.challenge_scalar(b"challenege_Az");
-    let r_B = transcript.challenge_scalar(b"challenege_Bz");
-    let r_C = transcript.challenge_scalar(b"challenege_Cz");
+    let r_A = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenege_Az");
+    let r_B = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenege_Bz");
+    let r_C = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenege_Cz");
 
     // r_A * comm_Az_claim + r_B * comm_Bz_claim + r_C * comm_Cz_claim;
     let scalars = vec![r_A.into_repr(), r_B.into_repr(), r_C.into_repr()];
@@ -464,7 +485,7 @@ impl<G: ProjectiveCurve> R1CSProof<G> {
       input_as_sparse_poly_entries.extend(
         (0..input.len())
           .map(|i| SparsePolyEntry::new(i + 1, input[i]))
-          .collect::<Vec<SparsePolyEntry>>(),
+          .collect::<Vec<SparsePolyEntry<G::ScalarField>>>(),
       );
       SparsePolynomial::new(n.log_2() as usize, input_as_sparse_poly_entries).evaluate(&ry[1..])
     };
@@ -504,8 +525,9 @@ impl<G: ProjectiveCurve> R1CSProof<G> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use ark_bls12_381::Fr;
+  use ark_bls12_381::G1Projective;
   use ark_std::test_rng;
-  use ark_std::UniformRand;
 
   fn produce_tiny_r1cs<F: PrimeField>() -> (R1CSInstance<F>, Vec<F>, Vec<F>) {
     // three constraints over five variables Z1, Z2, Z3, Z4, and Z5
@@ -566,26 +588,39 @@ mod tests {
 
   #[test]
   fn test_tiny_r1cs() {
-    let (inst, vars, input) = tests::produce_tiny_r1cs();
+    test_tiny_r1cs_helper::<Fr>()
+  }
+
+  fn test_tiny_r1cs_helper<F: PrimeField>() {
+    let (inst, vars, input) = tests::produce_tiny_r1cs::<F>();
     let is_sat = inst.is_sat(&vars, &input);
     assert!(is_sat);
   }
 
   #[test]
   fn test_synthetic_r1cs() {
-    let (inst, vars, input) = R1CSInstance::produce_synthetic_r1cs(1024, 1024, 10);
+    test_synthetic_r1cs_helper::<Fr>()
+  }
+
+  fn test_synthetic_r1cs_helper<F: PrimeField>() {
+    let (inst, vars, input) = R1CSInstance::<F>::produce_synthetic_r1cs(1024, 1024, 10);
     let is_sat = inst.is_sat(&vars, &input);
     assert!(is_sat);
   }
 
   #[test]
   pub fn check_r1cs_proof() {
+    check_r1cs_proof_helper::<G1Projective>()
+  }
+
+  fn check_r1cs_proof_helper<G: ProjectiveCurve>() {
     let num_vars = 1024;
     let num_cons = num_vars;
     let num_inputs = 10;
-    let (inst, vars, input) = R1CSInstance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
+    let (inst, vars, input) =
+      R1CSInstance::<G::ScalarField>::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
 
-    let gens = R1CSGens::new(b"test-m", num_cons, num_vars);
+    let gens = R1CSGens::<G>::new(b"test-m", num_cons, num_vars);
 
     let mut random_tape = RandomTape::new(b"proof");
     let mut prover_transcript = Transcript::new(b"example");
