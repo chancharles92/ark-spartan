@@ -2,15 +2,17 @@
 extern crate libspartan;
 extern crate merlin;
 
-use ark_bls12_381::G1Projective;
+use ark_bw6_761::G1Projective;
 use ark_ec::ProjectiveCurve;
 use libspartan::{Instance, SNARKGens, SNARK};
 use merlin::Transcript;
 
 use criterion::*;
 
+const NUM_VARS: usize = 22;
+
 fn snark_encode_benchmark<G: ProjectiveCurve>(c: &mut Criterion) {
-  for s in 10..21 {
+  for s in NUM_VARS..NUM_VARS + 1 {
     let plot_config = PlotConfiguration::default().summary_scale(AxisScale::Logarithmic);
     let mut group = c.benchmark_group("SNARK_encode_benchmark");
     group.plot_config(plot_config);
@@ -36,7 +38,7 @@ fn snark_encode_benchmark<G: ProjectiveCurve>(c: &mut Criterion) {
 }
 
 fn snark_prove_benchmark<G: ProjectiveCurve>(c: &mut Criterion) {
-  for s in 9..21 {
+  for s in NUM_VARS..NUM_VARS + 1 {
     let plot_config = PlotConfiguration::default().summary_scale(AxisScale::Logarithmic);
     let mut group = c.benchmark_group("SNARK_prove_benchmark");
     group.plot_config(plot_config);
@@ -75,7 +77,7 @@ fn snark_prove_benchmark<G: ProjectiveCurve>(c: &mut Criterion) {
 }
 
 fn snark_verify_benchmark<G: ProjectiveCurve>(c: &mut Criterion) {
-  for s in 10..21 {
+  for s in NUM_VARS..NUM_VARS + 1 {
     let plot_config = PlotConfiguration::default().summary_scale(AxisScale::Logarithmic);
     let mut group = c.benchmark_group("SNARK_verify_benchmark");
     group.plot_config(plot_config);

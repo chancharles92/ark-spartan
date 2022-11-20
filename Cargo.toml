@@ -38,6 +38,7 @@ ark-std = { version = "^0.3.0", default-features = false }
 ark-serialize =  { version = "^0.3.0", default-features = false, features = [ "derive" ] }
 
 ark-bls12-381 = { version = "0.3.0", default-features = false, features = [ "curve" ] }
+ark-bw6-761 = { version = "0.3.0", default-features = false }
 
 [dev-dependencies]
 criterion = "0.3.1"
