@@ -9,7 +9,7 @@ use merlin::Transcript;
 
 use criterion::*;
 
-const NUM_VARS: usize = 22;
+const NUM_VARS: usize = 20;
 
 fn snark_encode_benchmark<G: ProjectiveCurve>(c: &mut Criterion) {
   for s in NUM_VARS..NUM_VARS + 1 {
