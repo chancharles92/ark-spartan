@@ -4,7 +4,7 @@
 extern crate libspartan;
 extern crate merlin;
 
-use ark_bls12_381::{Fr, G1Projective};
+use ark_bw6_761::{Fr, G1Projective};
 use ark_serialize::CanonicalSerialize;
 use libspartan::{Instance, SNARKGens, SNARK};
 use merlin::Transcript;
